@@ -48,9 +48,14 @@ def on_message(client, userdata, msg):
                 "timestamp": datetime.now().isoformat()
             })
             
-            print(f"\n✅ BATCH {batch_id} COMPLETED")
+            print(f"\n{'='*60}")
+            print(f"✅ BATCH {batch_id} COMPLETED")
             print(f"   Total pills produced: {total_pills}")
             print(f"   Final defect rate: {defect_rate:.2f}%")
+            print(f"{'='*60}")
+            
+            # Schedule next batch
+            current_batch = None  # Reset so new batch will start on next cycle
             
     except json.JSONDecodeError:
         pass
@@ -212,6 +217,13 @@ try:
                 optimization_counter = 0
         
         batch_wait_time += 1
+        
+        # Auto-start new batch after completion
+        if current_batch is None and len(factory_state) >= 5:
+            print("\n⏳ Starting new batch in 3 seconds...")
+            time.sleep(3)
+            start_new_batch()
+            batch_wait_time = 0
         
         # Check if current batch is complete (output buffer has pills and input is empty)
         if "machine5" in factory_state:

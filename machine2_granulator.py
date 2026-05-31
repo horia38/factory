@@ -85,9 +85,11 @@ try:
                 machine_state["viscosity_cp"] = round(random.uniform(340.0, 410.0), 1)
                 machine_state["cycles_completed"] += 1
                 
-                # Signal to machine3 that granules are ready
+                # Signal to machine3 that granules are ready, then CLEAR buffer (handed off)
+                amount_to_send = machine_state["output_buffer_kg"]
                 client.publish("factory/events/machine2_granules_ready",
-                             json.dumps({"batch_id": active_batch_id, "amount_kg": machine_state["output_buffer_kg"]}))
+                             json.dumps({"batch_id": active_batch_id, "amount_kg": amount_to_send}))
+                machine_state["output_buffer_kg"] = 0  # Clear after publishing (handed off)
             
             elif machine_state["input_buffer_kg"] == 0:
                 machine_state["status"] = "WAITING_INPUT"

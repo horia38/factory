@@ -104,11 +104,13 @@ try:
                 machine_state["output_buffer_kg"] += dry_amount
                 machine_state["cycles_completed"] += 1
                 
-                # Signal to machine4 that dried granules are ready
+                # Signal to machine4 that dried granules are ready, then CLEAR buffer (handed off)
+                amount_to_send = machine_state["output_buffer_kg"]
                 client.publish("factory/events/machine3_granules_dried",
                              json.dumps({"batch_id": active_batch_id, 
-                                       "amount_kg": machine_state["output_buffer_kg"],
+                                       "amount_kg": amount_to_send,
                                        "moisture_pct": machine_state["output_moisture_pct"]}))
+                machine_state["output_buffer_kg"] = 0  # Clear after publishing (handed off)
             
             elif machine_state["input_buffer_kg"] == 0:
                 machine_state["status"] = "WAITING_INPUT"

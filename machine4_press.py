@@ -117,11 +117,13 @@ try:
                 machine_state["pills_produced"] += pills_made
                 machine_state["cycles_completed"] += 1
                 
-                # Signal to machine5 that pills are ready
+                # Signal to machine5 that pills are ready, then CLEAR buffer (handed off)
+                pills_to_send = machine_state["output_buffer_pills"]
                 client.publish("factory/events/machine4_pills_ready",
                              json.dumps({"batch_id": active_batch_id, 
-                                       "pill_count": machine_state["output_buffer_pills"],
+                                       "pill_count": pills_to_send,
                                        "defect_rate_pct": machine_state["defect_rate_pct"]}))
+                machine_state["output_buffer_pills"] = 0  # Clear after publishing (handed off)
             
             elif machine_state["input_buffer_kg"] == 0:
                 machine_state["status"] = "WAITING_INPUT"

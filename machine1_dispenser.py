@@ -44,6 +44,19 @@ def on_message(client, userdata, msg):
             machine_state["hopper_level_kg"] = machine_state["hopper_capacity_kg"]
             machine_state["status"] = "IDLE"
             print(f"\n[M1 COMMAND] Refilled hopper to {machine_state['hopper_level_kg']} kg")
+    except Exception as e:
+        print(f"[ERROR M1] Unexpected error in on_message: {e}")
+
+    try:
+        if "batch_completed" in msg.topic:
+            # Batch finished, reset for next one
+            print(f"\n[M1 RESET] Batch complete, resetting for next batch")
+            active_batch_id = None
+            machine_state["status"] = "IDLE"
+            machine_state["cycles_completed"] = 0
+            
+    except Exception as e:
+        print(f"[ERROR M1] Batch completion handling: {e}")
             
     except json.JSONDecodeError as e:
         print(f"[ERROR M1] JSON decode failed: {e}")
@@ -54,6 +67,7 @@ client = mqtt.Client("Machine1_Dispenser")
 client.on_message = on_message
 client.connect("localhost", 1883)
 client.subscribe("factory/commands/machine1")
+client.subscribe("factory/events/batch_completed")  # Listen for batch completion to reset
 client.loop_start()
 
 print("Machine 1 (Powder Dispenser) Powered On...")
@@ -77,9 +91,11 @@ try:
                 machine_state["total_powder_dispensed_kg"] += dispense_amount
                 machine_state["cycles_completed"] += 1
                 
-                # Signal to machine2 that powder is available
+                # Signal to machine2 that powder is available, then CLEAR buffer (handed off)
+                amount_to_send = machine_state["output_buffer_kg"]
                 client.publish("factory/events/machine1_powder_ready", 
-                             json.dumps({"batch_id": active_batch_id, "amount_kg": machine_state["output_buffer_kg"]}))
+                             json.dumps({"batch_id": active_batch_id, "amount_kg": amount_to_send}))
+                machine_state["output_buffer_kg"] = 0  # Clear after publishing (handed off)
             
             elif machine_state["hopper_level_kg"] <= 0:
                 machine_state["status"] = "LOW_POWDER"

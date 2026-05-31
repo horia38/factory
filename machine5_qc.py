@@ -124,13 +124,20 @@ try:
                 if machine_state["coating_fluid_liters"] < 10.0:
                     client.publish("factory/alerts/machine5_low_coating",
                                  json.dumps({"batch_id": active_batch_id, "remaining_liters": machine_state["coating_fluid_liters"]}))
-                
-                # Signal completion of batch if all pills processed
-                if machine_state["input_buffer_pills"] == 0 and machine_state["output_buffer_pills"] > 0:
-                    client.publish("factory/events/batch_completed",
-                                 json.dumps({"batch_id": active_batch_id,
-                                           "total_pills": machine_state["pills_coated"],
-                                           "defect_rate_pct": machine_state["actual_defect_rate_pct"]}))
+            
+            # Check for batch completion: no more input coming AND finished processing output
+            if machine_state["input_buffer_pills"] == 0 and machine_state["output_buffer_pills"] == 0 and machine_state["pills_coated"] > 0:
+                # Batch is complete!
+                total_pills = machine_state["pills_coated"]
+                defect_rate = machine_state["actual_defect_rate_pct"]
+                client.publish("factory/events/batch_completed",
+                             json.dumps({"batch_id": active_batch_id,
+                                       "total_pills": total_pills,
+                                       "defect_rate_pct": defect_rate}))
+                print(f"\n✅ BATCH {active_batch_id} COMPLETED: {total_pills} pills produced, {defect_rate:.2f}% defect rate")
+                active_batch_id = None  # Reset for next batch
+                machine_state["status"] = "IDLE"
+                machine_state["pills_coated"] = 0  # Reset for next batch
             
             elif machine_state["input_buffer_pills"] == 0:
                 machine_state["status"] = "WAITING_INPUT"
