@@ -115,40 +115,40 @@ export default function FactoryDashboard() {
         <MachineBox 
           id="m1" title="Powder Dispenser" alertStatus={getAlertStatus('m1')}
           stats={[
-            {label: 'HOPPER', value: state.machine1.hopper_level_kg?.toFixed(1) || '0.0'},
+            {label: 'HOPPER', value: `${state.machine1.hopper_level_kg?.toFixed(1) || '0.0'} kg`},
             {label: 'STATUS', value: state.machine1.status || 'OFFLINE'}
           ]} 
         />
         <MachineBox 
           id="m2" title="Granulator" alertStatus={getAlertStatus('m2')}
           stats={[
-            {label: 'SPEED', value: state.machine2.processing_speed_rpm || '0.0'},
-            {label: 'TEMP', value: `${state.machine2.motor_temp_c?.toFixed(1) || '0.0'}C`},
-            {label: 'VISC', value: `${state.machine2.viscosity_cp?.toFixed(1) || '0.0'}cP`}
+            {label: 'SPEED', value: `${state.machine2.processing_speed_rpm || '0'} RPM`},
+            {label: 'TEMP', value: `${state.machine2.motor_temp_c?.toFixed(1) || '0.0'} °C`},
+            {label: 'VISC', value: `${state.machine2.viscosity_cp?.toFixed(1) || '0.0'} cP`}
           ]} 
         />
         <MachineBox 
           id="m3" title="Dryer" alertStatus={getAlertStatus('m3')}
           stats={[
-            {label: 'HEAT', value: state.machine3.current_heat_c?.toFixed(1) || '0.0'},
-            {label: 'MOISTURE', value: `${state.machine3.output_moisture_pct?.toFixed(1) || '0.0'}%`},
-            {label: 'BUFFER', value: state.machine3.input_buffer_kg?.toFixed(1) || '0.0'}
+            {label: 'HEAT', value: `${state.machine3.current_heat_c?.toFixed(1) || '0.0'} °C`},
+            {label: 'MOISTURE', value: `${state.machine3.output_moisture_pct?.toFixed(1) || '0.0'} %`},
+            {label: 'BUFFER', value: `${state.machine3.input_buffer_kg?.toFixed(1) || '0.0'} kg`}
           ]} 
         />
         <MachineBox 
           id="m4" title="Pill Press" alertStatus={getAlertStatus('m4')}
           stats={[
-            {label: 'SPEED', value: state.machine4.speed_rpm || '0.0'},
-            {label: 'VIBE', value: `${state.machine4.vibration_hz?.toFixed(1) || '0.0'}Hz`},
-            {label: 'MOISTURE', value: `${state.machine4.input_moisture_pct?.toFixed(1) || '0.0'}%`}
+            {label: 'SPEED', value: `${state.machine4.speed_rpm || '0'} RPM`},
+            {label: 'VIBE', value: `${state.machine4.vibration_hz?.toFixed(1) || '0.0'} Hz`},
+            {label: 'MOISTURE', value: `${state.machine4.input_moisture_pct?.toFixed(1) || '0.0'} %`}
           ]} 
         />
         <MachineBox 
           id="m5" title="QC Coater" alertStatus={getAlertStatus('m5')}
           stats={[
-            {label: 'YIELD', value: `${(100 - (state.machine5.actual_defect_rate_pct || 0)).toFixed(1)}%`},
-            {label: 'DEFECTS', value: `${state.machine5.actual_defect_rate_pct?.toFixed(1) || '0.0'}%`},
-            {label: 'FLUID', value: state.machine5.coating_fluid_liters?.toFixed(1) || '0.0'}
+            {label: 'YIELD', value: `${(100 - (state.machine5.actual_defect_rate_pct || 0)).toFixed(1)} %`},
+            {label: 'DEFECTS', value: `${state.machine5.actual_defect_rate_pct?.toFixed(1) || '0.0'} %`},
+            {label: 'FLUID', value: `${state.machine5.coating_fluid_liters?.toFixed(1) || '0.0'} L`}
           ]} 
         />
 

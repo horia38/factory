@@ -139,10 +139,21 @@ body {
 
 .legend {
   position: absolute;
-  bottom: 20px;
-  left: 50px;
+  top: 650px;
+  left: 650px;
+  width: 280px;
+  height: 160px;
   display: flex;
-  gap: 2.5rem;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 1.2rem;
+  padding-left: 40px;
+  box-sizing: border-box;
+  background: rgba(22, 24, 33, 0.4);
+  backdrop-filter: blur(8px);
+  border: 1px dashed #2a2d3e;
+  border-radius: 12px;
   color: #8b92a5;
   font-family: monospace;
   font-size: 0.95rem;
