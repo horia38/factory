@@ -21,17 +21,21 @@ machine_state = {
 
 active_batch_id = None
 incoming_moisture = 2.0
+jam_active = False
+jam_timer = 0
 
 def on_message(client, userdata, msg):
     """Handle commands and events."""
-    global active_batch_id, incoming_moisture
+    global active_batch_id, incoming_moisture, jam_active, jam_timer
     
     try:
         topic = msg.topic
         
         if "triggers/m4_vibration_jam" in topic:
+            jam_active = True
+            jam_timer = 30  # Lasts 30 seconds
             machine_state["speed_rpm"] = 200
-            print(f"\n[M4 TRIGGER] Vibration Jam triggered! Speed forced down to 200 RPM")
+            print(f"\n[M4 TRIGGER] Vibration Jam triggered! Speed forced down to 200 RPM for 30s")
             return
             
         payload = json.loads(msg.payload.decode('utf-8'))
@@ -42,12 +46,13 @@ def on_message(client, userdata, msg):
             if action == "start_batch":
                 active_batch_id = payload.get("batch_id")
                 machine_state["status"] = "PRESSING"
-                machine_state["speed_rpm"] = payload.get("speed_rpm", 1000)
+                machine_state["target_rpm"] = payload.get("speed_rpm", 1000)
+                machine_state["speed_rpm"] = machine_state["target_rpm"]
                 print(f"\n✓ [M4 COMMAND] Starting batch {active_batch_id}, speed: {machine_state['speed_rpm']} RPM, status now: {machine_state['status']}")
                 
             elif action == "set_rpm":
-                machine_state["speed_rpm"] = payload.get("value", 1000)
-                print(f"\n[M4 COMMAND] Adjusting speed to {machine_state['speed_rpm']} RPM")
+                machine_state["target_rpm"] = payload.get("value", 1000)
+                print(f"\n[M4 COMMAND] Adjusting target speed to {machine_state['target_rpm']} RPM")
                 
             elif action == "pause":
                 machine_state["status"] = "IDLE"
@@ -99,7 +104,23 @@ try:
         # Calculate vibration based on speed
         if cycle % 20 == 0:  # Debug print every 60 seconds
             print(f"[DEBUG M4] Status={machine_state['status']}, active_batch_id={active_batch_id}, RPM={machine_state['speed_rpm']}, input={machine_state['input_buffer_kg']:.1f}kg, output={machine_state['output_buffer_pills']} pills")
-        
+        if "target_rpm" not in machine_state:
+            machine_state["target_rpm"] = 1000
+            
+        if jam_active:
+            jam_timer -= 3
+            if jam_timer <= 0:
+                jam_active = False
+                print(f"[M4] Jam cleared, speeding back up.")
+            else:
+                machine_state["speed_rpm"] = 200
+        else:
+            # Gradually stabilize to target
+            if machine_state["speed_rpm"] < machine_state["target_rpm"]:
+                machine_state["speed_rpm"] = min(machine_state["target_rpm"], machine_state["speed_rpm"] + 50)
+            elif machine_state["speed_rpm"] > machine_state["target_rpm"]:
+                machine_state["speed_rpm"] = max(machine_state["target_rpm"], machine_state["speed_rpm"] - 50)
+
         base_vib = (machine_state["speed_rpm"] / 1000) * 75.0
         machine_state["vibration_hz"] = round(base_vib + random.uniform(-3.0, 3.0), 1)
         
@@ -147,7 +168,7 @@ try:
         
         # Publish status periodically
         cycle += 1
-        if cycle % 2 == 0:
+        if True:
             client.publish("factory/status/machine4", json.dumps(machine_state))
 
         time.sleep(3)

@@ -203,16 +203,23 @@ try:
             start_new_batch()
             batch_wait_time = 0
         
-        # Check defect rate in real-time from M4
+        # Check defect rate and speed in real-time from M4
         current_defect_rate = 0.0
+        current_speed = 1000
         if "machine4" in factory_state:
             current_defect_rate = factory_state["machine4"].get("defect_rate_pct", 0.0)
+            current_speed = factory_state["machine4"].get("speed_rpm", 1000)
             
         current_time = time.time()
         
-        # Call AI only if defect rate is high and cooldown has passed
-        if current_defect_rate > 5.0 and (current_time - last_ai_call_time) >= 60.0:
-            print(f"\n⚠️ HIGH DEFECT RATE DETECTED ({current_defect_rate:.2f}%). Consulting AI Master Coordinator...")
+        # Call AI only if defect rate is high or production is critically low, and cooldown has passed
+        if (current_defect_rate > 5.0 or current_speed < 500) and (current_time - last_ai_call_time) >= 60.0:
+            if current_speed < 500:
+                print(f"\n⚠️ CRITICALLY LOW PRODUCTION DETECTED (M4 Speed: {current_speed} RPM). Consulting AI Master Coordinator...")
+                mqtt_client.publish("factory/alerts/master_agent", json.dumps({"message": f"Low production detected (Speed: {current_speed} RPM). Consulting AI API..."}))
+            else:
+                print(f"\n⚠️ HIGH DEFECT RATE DETECTED ({current_defect_rate:.2f}%). Consulting AI Master Coordinator...")
+                mqtt_client.publish("factory/alerts/master_agent", json.dumps({"message": f"High defect rate detected ({current_defect_rate:.1f}%). Consulting AI API..."}))
             print(f"\n📊 PRODUCTION METRICS (Last 3 Batches):")
             if batch_history:
                 for batch in batch_history[-3:]:
@@ -225,6 +232,7 @@ try:
             
             if ai_optimization:
                 print(f"\n[AI ANALYSIS]: {ai_optimization['analysis']}")
+                mqtt_client.publish("factory/alerts/master_agent", json.dumps({"message": f"AI ANALYSIS: {ai_optimization['analysis']}"}))
                 print(f"\n[APPLYING OPTIMIZATIONS]:")
                 for rec in ai_optimization.get("recommendations", []):
                     apply_optimization(rec)

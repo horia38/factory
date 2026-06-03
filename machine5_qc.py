@@ -99,13 +99,9 @@ try:
                 # Process 200 pills at a time (1.0 kg equivalent)
                 pills_to_process = min(200, machine_state["input_buffer_pills"])
                 
-                # QC inspection: some pills with defects are caught and rejected
-                # Use probability to avoid truncation for small defect rates
+                # QC inspection: exact correlation to input defect rate
                 defect_prob = machine_state["defect_rate_input_pct"] / 100.0
-                actual_defects = sum(1 for _ in range(pills_to_process) if random.random() < defect_prob)
-                
-                # Randomness in detection (not all defects caught)
-                detected_defects = int(actual_defects * random.uniform(0.7, 1.0))
+                detected_defects = int(pills_to_process * defect_prob)
                 pills_passed = pills_to_process - detected_defects
                 
                 # Coating improves quality: reduces visible defects further
@@ -120,7 +116,7 @@ try:
                 machine_state["pills_inspected"] += pills_to_process
                 machine_state["pills_rejected"] += detected_defects
                 machine_state["pills_coated"] += final_coated_pills
-                machine_state["actual_defect_rate_pct"] = (machine_state["pills_rejected"] / max(1, machine_state["pills_inspected"])) * 100.0
+                machine_state["actual_defect_rate_pct"] = (detected_defects / max(1, pills_to_process)) * 100.0
                 machine_state["cycles_completed"] += 1
                 
                 # Alert if coating fluid is low
@@ -140,7 +136,7 @@ try:
         
         # Publish status periodically
         cycle += 1
-        if cycle % 2 == 0:
+        if True:
             client.publish("factory/status/machine5", json.dumps(machine_state))
 
         time.sleep(3)

@@ -129,7 +129,7 @@ try:
         
         # Publish status periodically
         cycle += 1
-        if cycle % 2 == 0:
+        if True:
             client.publish("factory/status/machine3", json.dumps(machine_state))
 
         time.sleep(3)
