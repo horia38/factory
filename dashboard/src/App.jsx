@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import './index.css';
 
 export default function FactoryDashboard() {
@@ -56,6 +56,21 @@ export default function FactoryDashboard() {
     return () => clearTimeout(timer);
   }, [state.alerts]);
 
+  const chatMessagesRef = useRef(null);
+  
+  // Smart auto-scroll: only scroll if already near bottom
+  useEffect(() => {
+    const el = chatMessagesRef.current;
+    if (!el) return;
+    
+    // Check if scrolled near bottom (within 100px)
+    const isAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
+    
+    if (isAtBottom) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [state.alerts]);
+
   const getAlertStatus = (m) => {
     if (aiGlows[m]) return 'ai-command';
     if (m === 'm1') return isM1Starved ? 'danger' : 'normal';
@@ -86,15 +101,15 @@ export default function FactoryDashboard() {
   );
 
   return (
-    <div style={{minHeight: '100vh', background: '#0a0a0c', padding: '2rem'}}>
-      <h2 style={{color: '#fff', fontFamily: 'monospace', textAlign: 'center', marginBottom: '2rem'}}>Pharmaceutical Pipeline Simulation</h2>
-      <div className="factory-container">
-        
+    <div className="factory-container">
+      
+      {/* Left Side: Machines Grid */}
+      <div className="machines-grid">
         <svg className="svg-layer">
-          <line x1="380" y1="180" x2="750" y2="180" className={`flow-line ${m1Flow ? 'active' : ''}`} />
-          <line x1="890" y1="260" x2="890" y2="400" className={`flow-line ${m2Flow ? 'active' : ''}`} />
-          <line x1="750" y1="480" x2="380" y2="480" className={`flow-line ${m3Flow ? 'active' : ''}`} />
-          <line x1="240" y1="560" x2="240" y2="700" className={`flow-line ${m4Flow ? 'active' : ''}`} />
+          <line x1="330" y1="130" x2="650" y2="130" className={`flow-line ${m1Flow ? 'active' : ''}`} />
+          <line x1="790" y1="210" x2="790" y2="350" className={`flow-line ${m2Flow ? 'active' : ''}`} />
+          <line x1="650" y1="430" x2="330" y2="430" className={`flow-line ${m3Flow ? 'active' : ''}`} />
+          <line x1="190" y1="510" x2="190" y2="650" className={`flow-line ${m4Flow ? 'active' : ''}`} />
         </svg>
 
         <MachineBox 
@@ -142,11 +157,13 @@ export default function FactoryDashboard() {
           <span className="legend-item"><span className="dot danger"></span> Critical Threshold</span>
           <span className="legend-item"><span className="dot flow"></span> Material Flow</span>
         </div>
+      </div>
 
-        <div className="chat-box">
-          <div className="chat-header">Master Agent Comm Link</div>
-          <div className="chat-messages">
-            {(state.alerts || []).filter(a => a.topic.includes('master_agent') || a.topic.includes('events/batch_') || a.topic.includes('commands/')).map((msg, idx) => {
+      {/* Right Side: Chat Box */}
+      <div className="chat-box">
+        <div className="chat-header">Master Agent Comm Link</div>
+        <div className="chat-messages" ref={chatMessagesRef}>
+          {(state.alerts || []).filter(a => a.topic.includes('master_agent') || a.topic.includes('events/batch_') || a.topic.includes('commands/')).map((msg, idx) => {
               const isCmd = msg.topic.includes('commands/');
               let displayMsg = '';
               if (isCmd) {
@@ -162,7 +179,6 @@ export default function FactoryDashboard() {
                 </div>
               );
             })}
-          </div>
         </div>
       </div>
     </div>

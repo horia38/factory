@@ -1,22 +1,34 @@
 body {
   margin: 0;
   padding: 0;
-  background-color: #050608;
+  background-color: #0b0d14;
   font-family: 'Inter', system-ui, sans-serif;
+  overflow: hidden;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100vw;
+  height: 100vh;
 }
 
 .factory-container {
-  width: 95%;
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  align-items: center;
+  gap: 3rem;
+  width: 100%;
   max-width: 1600px;
-  min-width: 1400px;
-  height: 950px;
+  height: 100%;
+  padding: 2rem;
+  box-sizing: border-box;
+}
+
+.machines-grid {
   position: relative;
-  margin: 2rem auto;
-  background: #0d0f17;
-  border-radius: 16px;
-  border: 1px solid #1f2232;
-  box-shadow: 0 20px 50px rgba(0,0,0,0.6), inset 0 0 100px rgba(0,0,0,0.2);
-  overflow: hidden;
+  width: 1000px;
+  height: 850px;
+  flex-shrink: 0;
 }
 
 .svg-layer {
@@ -89,11 +101,11 @@ body {
   100% { box-shadow: 0 0 30px rgba(168, 85, 247, 0.4); }
 }
 
-#m1 { top: 100px; left: 100px; }
-#m2 { top: 100px; left: 750px; }
-#m3 { top: 400px; left: 750px; }
-#m4 { top: 400px; left: 100px; }
-#m5 { top: 700px; left: 100px; }
+#m1 { top: 50px; left: 50px; }
+#m2 { top: 50px; left: 650px; }
+#m3 { top: 350px; left: 650px; }
+#m4 { top: 350px; left: 50px; }
+#m5 { top: 650px; left: 50px; }
 
 .machine-title {
   text-align: center;
@@ -127,8 +139,8 @@ body {
 
 .legend {
   position: absolute;
-  bottom: 30px;
-  left: 100px;
+  bottom: 20px;
+  left: 50px;
   display: flex;
   gap: 2.5rem;
   color: #8b92a5;
@@ -153,11 +165,12 @@ body {
 .dot.flow { background: #38bdf8; box-shadow: 0 0 8px rgba(56,189,248,0.5); }
 
 .chat-box {
-  position: absolute;
-  top: 100px;
-  right: 50px;
-  width: 320px;
-  height: 760px;
+  position: relative;
+  top: auto;
+  left: auto;
+  right: auto;
+  width: 400px;
+  height: 850px;
   background: rgba(22, 24, 33, 0.85);
   backdrop-filter: blur(12px);
   border: 1px solid #2a2d3e;
@@ -167,6 +180,7 @@ body {
   color: #fff;
   font-family: monospace;
   box-shadow: 0 8px 16px rgba(0,0,0,0.4);
+  flex-shrink: 0;
 }
 
 .chat-header {
@@ -193,17 +207,20 @@ body {
 }
 
 .chat-msg {
-  font-size: 0.9rem;
-  line-height: 1.4;
+  font-size: 1rem;
+  line-height: 1.5;
   color: #e2e8f0;
-  padding: 8px;
-  background: rgba(0,0,0,0.2);
-  border-radius: 6px;
-  border-left: 2px solid #38bdf8;
+  padding: 12px;
+  background: rgba(0,0,0,0.25);
+  border-radius: 8px;
+  border-left: 3px solid #38bdf8;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
 }
 
 .chat-msg.cmd-msg {
-  border-left: 2px solid #a855f7;
+  border-left: 3px solid #a855f7;
   color: #d8b4fe;
 }
 

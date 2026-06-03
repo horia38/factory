@@ -202,6 +202,10 @@ mqtt_client.loop_start()
 print("\n" + "="*60)
 print("🤖 MASTER AI AGENT ONLINE - FACTORY COORDINATION SYSTEM")
 print("="*60)
+
+# Clear the web UI logs on startup
+mqtt_client.publish("factory/commands/master_agent", json.dumps({"action": "clear_alerts"}))
+
 print("Monitoring 5 production machines...")
 print("=" * 60)
 

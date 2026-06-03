@@ -33,7 +33,10 @@ def on_message(client, userdata, msg):
             factory_state[machine_num] = payload
             
         elif topic.startswith("factory/alerts/") or "batch_completed" in topic or topic.startswith("factory/commands/"):
-            if topic.startswith("factory/commands/") and payload.get("action") == "start_batch":
+            if topic.startswith("factory/commands/") and payload.get("action") == "clear_alerts":
+                factory_state["alerts"] = []
+                return
+            elif topic.startswith("factory/commands/") and payload.get("action") == "start_batch":
                 pass # Ignore start batch commands as they spam the log
             else:
                 alert_msg = {"topic": topic, "payload": payload, "timestamp": time.time()}
