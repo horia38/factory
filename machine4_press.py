@@ -28,13 +28,16 @@ def on_message(client, userdata, msg):
     
     try:
         topic = msg.topic
-        print(f"[DEBUG M4] Received message on topic: {topic}")
+        
+        if "triggers/m4_vibration_jam" in topic:
+            machine_state["speed_rpm"] = 200
+            print(f"\n[M4 TRIGGER] Vibration Jam triggered! Speed forced down to 200 RPM")
+            return
+            
         payload = json.loads(msg.payload.decode('utf-8'))
-        print(f"[DEBUG M4] Parsed payload: {payload}")
         
         if "commands/machine4" in topic:
             action = payload.get("action")
-            print(f"[DEBUG M4] Command action: {action}")
             
             if action == "start_batch":
                 active_batch_id = payload.get("batch_id")
@@ -52,22 +55,28 @@ def on_message(client, userdata, msg):
                 
         elif "machine3_granules_dried" in topic:
             # Machine3 signals dried granules are ready
-            print(f"[DEBUG M4] Received granules_dried event")
             amount = payload.get("amount_kg", 0)
             moisture = payload.get("moisture_pct", 2.0)
             incoming_moisture = moisture
             
             if amount > 0:
                 transfer = min(amount, machine_state["input_buffer_capacity_kg"] - machine_state["input_buffer_kg"])
-                machine_state["input_buffer_kg"] += transfer
-                machine_state["input_moisture_pct"] = moisture
-                
-                # Resume processing if we were waiting for input
-                if machine_state["status"] == "WAITING_INPUT" and active_batch_id:
-                    machine_state["status"] = "PRESSING"
-                    print(f"[RESUME] Resuming PRESSING, got {transfer} kg granules. Moisture: {moisture:.1f}%")
-                else:
-                    print(f"[INPUT] Received {transfer} kg granules. Moisture: {moisture:.1f}%")
+                if transfer > 0:
+                    machine_state["input_buffer_kg"] += transfer
+                    machine_state["input_moisture_pct"] = moisture
+                    
+                    if machine_state["status"] == "WAITING_INPUT":
+                        machine_state["status"] = "PRESSING"
+                        
+                    # Confirm consumption back to M3
+                    client.publish("factory/events/machine4_consumed", json.dumps({"consumed_kg": transfer}))
+                    
+                    # Resume processing if we were waiting for input
+                    if machine_state["status"] == "WAITING_INPUT" and active_batch_id:
+                        machine_state["status"] = "PRESSING"
+                        print(f"[RESUME] Resuming PRESSING, got {transfer} kg granules. Moisture: {moisture:.1f}%")
+                    else:
+                        print(f"[INPUT] Received {transfer} kg granules. Moisture: {moisture:.1f}%")
                 
     except json.JSONDecodeError as e:
         print(f"[ERROR M4] JSON decode failed: {e}")
@@ -79,6 +88,7 @@ client.on_message = on_message
 client.connect("localhost", 1883)
 client.subscribe("factory/commands/machine4")
 client.subscribe("factory/events/machine3_granules_dried")
+client.subscribe("factory/triggers/m4_vibration_jam")
 client.loop_start()
 
 print("Machine 4 (Pill Press) Powered On...")
@@ -99,8 +109,9 @@ try:
                 # Each kg of granules makes ~200 pills
                 pills_per_kg = 200
                 
-                # Process 0.5 kg at a time
-                process_amount = min(0.5, machine_state["input_buffer_kg"])
+                # PHYSICS: Process amount is dependent on speed_rpm (1000 RPM -> 1.0 kg)
+                max_process = 1.0 * (machine_state["speed_rpm"] / 1000.0)
+                process_amount = min(max_process, machine_state["input_buffer_kg"])
                 pills_made = int(process_amount * pills_per_kg)
                 
                 # CRITICAL PHYSICS: Moisture and vibration affect defect rate
@@ -108,6 +119,12 @@ try:
                 # Formula: base defect + (dryness penalty) + (vibration penalty)
                 base_defect = 0.3
                 dryness_penalty = 0 if machine_state["input_moisture_pct"] >= 1.5 else (1.5 - machine_state["input_moisture_pct"]) * 3.0
+                
+                # PHYSICS: Thermal Cascade Defect Spike
+                if machine_state["input_moisture_pct"] < 1.0:
+                    dryness_penalty += 15.0
+                    print(f"[PHYSICS M4] Moisture critically low (<1.0%)! Defect rate spiking by +15%.")
+                    
                 vibration_penalty = max(0, (machine_state["vibration_hz"] - 75.0) * 0.05)
                 
                 machine_state["defect_rate_pct"] = base_defect + dryness_penalty + vibration_penalty

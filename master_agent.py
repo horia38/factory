@@ -67,27 +67,32 @@ def call_ai_optimization():
     system_prompt = """
     You are the Master AI Coordinator for a pharmaceutical pill manufacturing pipeline.
     
-    PIPELINE PHYSICS:
+    PIPELINE PHYSICS & FAILURES:
     1. Dispenser (M1) → outputs powder to Granulator
+       - CRITICAL FAILURE (trigger_m1_leak.py): Hopper drops to 15kg. M1 feed starves, dispensing is reduced by 30-50%, and M1 shortchanges M2.
     2. Granulator (M2) → converts powder to granules, sends to Dryer
+       - CRITICAL: M1 shortchanging M2 causes viscosity spikes (>400cP).
+       - CRITICAL FAILURE (trigger_m2_rpm_surge.py): Forces RPM to 1200. High viscosity or RPM surges forces M2 motor to work harder, overheating it (>70C).
     3. Dryer (M3) → controls heat, affects moisture content
-       - CRITICAL: Lower heat = higher moisture, Higher heat = lower moisture
-       - Too dry (moisture < 1.5%) + high vibration = crumbly pills (high defects)
+       - PARAMETERS YOU CAN CHANGE: target_heat_c (default 80.0)
+       - CRITICAL: M2 overheating causes M3's heat to overshoot, dropping moisture critically low (< 1.0%).
+       - Backpressure from M4 slowing down prevents M3 from emptying its output buffer, over-baking the granules (moisture drops by 0.5% every cycle).
     4. Press (M4) → presses pills at variable RPM/vibration
-       - CRITICAL: Input moisture and vibration directly affect defect rate
-       - Defects = base + (dryness_penalty if moisture < 1.5%) + (vibration_penalty)
+       - PARAMETERS YOU CAN CHANGE: speed_rpm (default 1000)
+       - CRITICAL: Moisture < 1.0% causes massive defect spikes (+15%).
+       - CRITICAL FAILURE (trigger_m4_vibration_jam.py): Forces speed down to 200 RPM, severely slowing consumption and causing backpressure in M3.
     5. QC (M5) → inspects and coats pills, rejects defective ones
     
     YOUR OPTIMIZATION GOAL:
-    - Minimize defect rates by optimizing Dryer heat and Press RPM
-    - Consider the interconnected physics: dryer output moisture → press defects
-    - Provide 2-3 specific, actionable adjustments
+    - Minimize defect rates by optimizing M3 target_heat_c and M4 speed_rpm.
+    - Identify if cascading failures (e.g. M1 leak -> M2 overheat -> M3 overbake -> M4 defects) are occurring.
+    - Provide 1-2 specific, actionable adjustments. Note that if a failure script is actively overriding a parameter, your changes might be ignored by the hardware, but you should attempt to mitigate via other parameters.
     
     RESPONSE FORMAT - ONLY valid JSON:
     {
       "analysis": "Explain the current issue and physics involved",
       "recommendations": [
-        {"machine": "machine3", "parameter": "target_heat_c", "current_value": 85, "suggested_value": 90, "reason": "increase to reduce moisture"},
+        {"machine": "machine3", "parameter": "target_heat_c", "current_value": 80, "suggested_value": 85, "reason": "increase to reduce moisture"},
         {"machine": "machine4", "parameter": "speed_rpm", "current_value": 1000, "suggested_value": 950, "reason": "reduce vibration to improve quality"}
       ]
     }
@@ -131,7 +136,7 @@ def start_new_batch():
     time.sleep(1)
     
     print(f"📤 Publishing start_batch to machine3...")
-    mqtt_client.publish("factory/commands/machine3", json.dumps({"action": "start_batch", "batch_id": current_batch, "target_heat": 85.0}))
+    mqtt_client.publish("factory/commands/machine3", json.dumps({"action": "start_batch", "batch_id": current_batch, "target_heat": 80.0}))
     time.sleep(1)
     
     print(f"📤 Publishing start_batch to machine4...")
@@ -182,7 +187,7 @@ try:
     time.sleep(3)  # Wait for machines to connect
     
     batch_wait_time = 0
-    optimization_counter = 0
+    last_ai_call_time = 0
     
     while True:
         # Check if all machines are online
@@ -198,23 +203,31 @@ try:
             start_new_batch()
             batch_wait_time = 0
         
-        # Periodically optimize based on data
-        optimization_counter += 1
-        if optimization_counter % 20 == 0 and batch_history:  # Every ~60 seconds
+        # Check defect rate in real-time from M4
+        current_defect_rate = 0.0
+        if "machine4" in factory_state:
+            current_defect_rate = factory_state["machine4"].get("defect_rate_pct", 0.0)
+            
+        current_time = time.time()
+        
+        # Call AI only if defect rate is high and cooldown has passed
+        if current_defect_rate > 5.0 and (current_time - last_ai_call_time) >= 60.0:
+            print(f"\n⚠️ HIGH DEFECT RATE DETECTED ({current_defect_rate:.2f}%). Consulting AI Master Coordinator...")
             print(f"\n📊 PRODUCTION METRICS (Last 3 Batches):")
-            for batch in batch_history[-3:]:
-                print(f"   {batch['batch_id']}: {batch['total_pills']} pills, {batch['defect_rate_pct']:.2f}% defects")
+            if batch_history:
+                for batch in batch_history[-3:]:
+                    print(f"   {batch['batch_id']}: {batch['total_pills']} pills, {batch['defect_rate_pct']:.2f}% defects")
+            else:
+                print(f"   No batches completed yet.")
             
             ai_optimization = call_ai_optimization()
+            last_ai_call_time = time.time()
+            
             if ai_optimization:
                 print(f"\n[AI ANALYSIS]: {ai_optimization['analysis']}")
                 print(f"\n[APPLYING OPTIMIZATIONS]:")
-                for rec in ai_optimization["recommendations"]:
+                for rec in ai_optimization.get("recommendations", []):
                     apply_optimization(rec)
-                
-                # Wait for changes to take effect
-                time.sleep(20)
-                optimization_counter = 0
         
         batch_wait_time += 1
         
@@ -225,12 +238,32 @@ try:
             start_new_batch()
             batch_wait_time = 0
         
-        # Check if current batch is complete (output buffer has pills and input is empty)
-        if "machine5" in factory_state:
+        # Check if current batch is complete: pipeline empty and pills coated
+        if current_batch is not None and "machine5" in factory_state:
             m5 = factory_state["machine5"]
             m4 = factory_state["machine4"]
-            if m5["output_buffer_pills"] > 100 and m4["input_buffer_kg"] == 0:
-                print("\n🔄 Previous batch processing complete. Starting new batch in 5 seconds...")
+            m3 = factory_state.get("machine3", {"output_buffer_kg": 0, "input_buffer_kg": 0})
+            m2 = factory_state.get("machine2", {"output_buffer_kg": 0, "input_buffer_kg": 0})
+            m1 = factory_state.get("machine1", {"output_buffer_kg": 0, "batch_dispensed_kg": 0.0})
+            
+            # Since M1 stops after dispensing 20kg, eventually everything else empties out
+            if (m5["pills_coated"] > 0 and 
+                m5["input_buffer_pills"] == 0 and 
+                m4["input_buffer_kg"] == 0 and m4.get("output_buffer_pills", 0) == 0 and
+                m3["input_buffer_kg"] == 0 and m3["output_buffer_kg"] == 0 and
+                m2["input_buffer_kg"] == 0 and m2["output_buffer_kg"] == 0 and
+                m1["output_buffer_kg"] == 0 and 
+                m1.get("batch_dispensed_kg", 0.0) >= 20.0):
+                
+                print(f"\n🔄 Pipeline empty. Batch {current_batch} processing complete!")
+                
+                # Manually trigger batch_completed event for the system
+                mqtt_client.publish("factory/events/batch_completed", json.dumps({
+                    "batch_id": current_batch,
+                    "total_pills": m5["pills_coated"],
+                    "defect_rate_pct": m5.get("actual_defect_rate_pct", 0.0)
+                }))
+                
                 time.sleep(5)
                 start_new_batch()
                 batch_wait_time = 0

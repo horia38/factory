@@ -31,17 +31,19 @@ def on_message(client, userdata, msg):
     
     try:
         topic = msg.topic
-        print(f"[DEBUG M5] Received message on topic: {topic}")
         payload = json.loads(msg.payload.decode('utf-8'))
-        print(f"[DEBUG M5] Parsed payload: {payload}")
         
         if "commands/machine5" in topic:
             action = payload.get("action")
-            print(f"[DEBUG M5] Command action: {action}")
             
             if action == "start_batch":
                 active_batch_id = payload.get("batch_id")
                 machine_state["status"] = "INSPECTING"
+                machine_state["pills_coated"] = 0
+                machine_state["pills_rejected"] = 0
+                machine_state["pills_inspected"] = 0
+                machine_state["output_buffer_pills"] = 0
+                machine_state["input_buffer_pills"] = 0
                 print(f"\n✓ [M5 COMMAND] Starting batch {active_batch_id}, status now: {machine_state['status']}")
                 
             elif action == "refill_coating":
@@ -54,7 +56,6 @@ def on_message(client, userdata, msg):
                 
         elif "machine4_pills_ready" in topic:
             # Machine4 signals pills are ready for QC
-            print(f"[DEBUG M5] Received pills_ready event")
             pill_count = payload.get("pill_count", 0)
             defect_rate = payload.get("defect_rate_pct", 0.5)
             incoming_defect_rate = defect_rate
@@ -65,7 +66,7 @@ def on_message(client, userdata, msg):
                 machine_state["defect_rate_input_pct"] = defect_rate
                 
                 # Resume processing if we were waiting for input
-                if machine_state["status"] == "WAITING_INPUT" and active_batch_id:
+                if machine_state["status"] == "WAITING_INPUT":
                     machine_state["status"] = "INSPECTING"
                     print(f"[RESUME] Resuming INSPECTING, got {transfer} pills. Defect rate: {defect_rate:.1f}%")
                 else:
@@ -95,14 +96,16 @@ try:
         if machine_state["status"] == "INSPECTING" and active_batch_id:
             if machine_state["input_buffer_pills"] > 0 and machine_state["output_buffer_pills"] < machine_state["output_buffer_capacity_pills"] and machine_state["coating_fluid_liters"] > 0:
                 
-                # Process 50 pills at a time
-                pills_to_process = min(50, machine_state["input_buffer_pills"])
+                # Process 200 pills at a time (1.0 kg equivalent)
+                pills_to_process = min(200, machine_state["input_buffer_pills"])
                 
                 # QC inspection: some pills with defects are caught and rejected
-                detected_defects = int(pills_to_process * (machine_state["defect_rate_input_pct"] / 100.0))
+                # Use probability to avoid truncation for small defect rates
+                defect_prob = machine_state["defect_rate_input_pct"] / 100.0
+                actual_defects = sum(1 for _ in range(pills_to_process) if random.random() < defect_prob)
                 
                 # Randomness in detection (not all defects caught)
-                detected_defects = int(detected_defects * random.uniform(0.7, 1.0))
+                detected_defects = int(actual_defects * random.uniform(0.7, 1.0))
                 pills_passed = pills_to_process - detected_defects
                 
                 # Coating improves quality: reduces visible defects further
@@ -125,21 +128,12 @@ try:
                     client.publish("factory/alerts/machine5_low_coating",
                                  json.dumps({"batch_id": active_batch_id, "remaining_liters": machine_state["coating_fluid_liters"]}))
             
-            # Check for batch completion: no more input coming AND finished processing output
-            if machine_state["input_buffer_pills"] == 0 and machine_state["output_buffer_pills"] == 0 and machine_state["pills_coated"] > 0:
-                # Batch is complete!
-                total_pills = machine_state["pills_coated"]
-                defect_rate = machine_state["actual_defect_rate_pct"]
-                client.publish("factory/events/batch_completed",
-                             json.dumps({"batch_id": active_batch_id,
-                                       "total_pills": total_pills,
-                                       "defect_rate_pct": defect_rate}))
-                print(f"\n✅ BATCH {active_batch_id} COMPLETED: {total_pills} pills produced, {defect_rate:.2f}% defect rate")
-                active_batch_id = None  # Reset for next batch
-                machine_state["status"] = "IDLE"
-                machine_state["pills_coated"] = 0  # Reset for next batch
-            
-            elif machine_state["input_buffer_pills"] == 0:
+            # Automatically ship pills to packaging to prevent buffer from filling up
+            if machine_state["output_buffer_pills"] >= 500:
+                print(f"[M5] Shipping {machine_state['output_buffer_pills']} coated pills to packaging...")
+                machine_state["output_buffer_pills"] = 0
+                
+            if machine_state["input_buffer_pills"] == 0:
                 machine_state["status"] = "WAITING_INPUT"
             elif machine_state["coating_fluid_liters"] <= 0:
                 machine_state["status"] = "IDLE"

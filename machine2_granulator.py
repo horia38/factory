@@ -25,13 +25,17 @@ def on_message(client, userdata, msg):
     
     try:
         topic = msg.topic
-        print(f"[DEBUG M2] Received message on topic: {topic}")
+        
+        if "triggers/m2_rpm_surge" in topic:
+            machine_state["processing_speed_rpm"] = 1200
+            machine_state["surge_timer"] = 10
+            print(f"\n[M2 TRIGGER] RPM Surge triggered! Speed forced to 1200 RPM for 30 seconds.")
+            return
+            
         payload = json.loads(msg.payload.decode('utf-8'))
-        print(f"[DEBUG M2] Parsed payload: {payload}")
         
         if "commands/machine2" in topic:
             action = payload.get("action")
-            print(f"[DEBUG M2] Command action: {action}")
             
             if action == "start_batch":
                 active_batch_id = payload.get("batch_id")
@@ -44,11 +48,12 @@ def on_message(client, userdata, msg):
                 
         elif "machine1_powder_ready" in topic:
             # Machine1 signals that powder is available
-            print(f"[DEBUG M2] Received powder_ready event")
             amount = payload.get("amount_kg", 0)
             if amount > 0:
                 transfer = min(amount, machine_state["input_buffer_capacity_kg"] - machine_state["input_buffer_kg"])
                 machine_state["input_buffer_kg"] += transfer
+                if machine_state["status"] == "WAITING_INPUT":
+                    machine_state["status"] = "PROCESSING"
                 print(f"[INPUT] Received {transfer} kg from Dispenser. Buffer: {machine_state['input_buffer_kg']} kg")
                 
     except json.JSONDecodeError as e:
@@ -61,6 +66,7 @@ client.on_message = on_message
 client.connect("localhost", 1883)
 client.subscribe("factory/commands/machine2")
 client.subscribe("factory/events/machine1_powder_ready")
+client.subscribe("factory/triggers/m2_rpm_surge")
 client.loop_start()
 
 print("Machine 2 (Granulator) Powered On...")
@@ -74,21 +80,58 @@ try:
         # Process powder if we have input and we're active
         if machine_state["status"] == "PROCESSING" and active_batch_id:
             if machine_state["input_buffer_kg"] > 0 and machine_state["output_buffer_kg"] < machine_state["output_buffer_capacity_kg"]:
-                # Granulate: consume input, produce output (granules are more volume-dense)
-                process_amount = min(machine_state["batch_size_kg"], machine_state["input_buffer_kg"])
+                # Processing speed
+                max_process = min(1.0, machine_state["input_buffer_kg"])
+                process_amount = max_process
+                
+                # PHYSICS: Viscosity Spike due to Feed Starvation
+                # If incoming powder is unexpectedly low, ratio of liquid binder to powder is too high
+                expected_amount = 1.0
+                actual_amount = process_amount
+                
+                if actual_amount < expected_amount - 0.2:
+                    # Not enough powder -> too much liquid -> viscosity spikes!
+                    machine_state["viscosity_cp"] = min(800.0, 350.0 / actual_amount)
+                    machine_state["processing_speed_rpm"] = random.randint(750, 850)
+                
+                # PHYSICS: Viscosity calculation based on input amount
+                machine_state["viscosity_cp"] = round(350.0 / max(0.1, process_amount), 1)
+                
                 granule_output = process_amount * 0.95  # 95% efficiency
                 
                 machine_state["input_buffer_kg"] -= process_amount
                 machine_state["output_buffer_kg"] += granule_output
-                machine_state["processing_speed_rpm"] = random.randint(750, 850)
-                machine_state["motor_temp_c"] = round(random.uniform(55.0, 75.0), 1)
-                machine_state["viscosity_cp"] = round(random.uniform(340.0, 410.0), 1)
+                
+                # Manage temporary RPM surge
+                if machine_state.get("surge_timer", 0) > 0:
+                    machine_state["processing_speed_rpm"] = 1200
+                    machine_state["surge_timer"] -= 1
+                else:
+                    machine_state["processing_speed_rpm"] = random.randint(750, 850)
+                
+                # PHYSICS: Motor temp increases if viscosity > 400cP or RPM is high
+                target_temp = 55.0 + (machine_state["processing_speed_rpm"] - 750) * 0.05
+                viscosity_penalty = 15.0 if machine_state["viscosity_cp"] > 400.0 else 0.0
+                target_temp += viscosity_penalty
+                
+                # Smooth temperature changes (heats quickly, cools slowly)
+                current_temp = machine_state["motor_temp_c"]
+                if current_temp < target_temp:
+                    machine_state["motor_temp_c"] = round(min(target_temp, current_temp + 3.0) + random.uniform(-0.5, 0.5), 1)
+                elif current_temp > target_temp:
+                    machine_state["motor_temp_c"] = round(max(target_temp, current_temp - 1.0) + random.uniform(-0.5, 0.5), 1)
+                else:
+                    machine_state["motor_temp_c"] = round(target_temp + random.uniform(-0.5, 0.5), 1)
+                
+                if viscosity_penalty > 0:
+                    print(f"[PHYSICS M2] Viscosity spike ({machine_state['viscosity_cp']} cP) from low input! Motor temp raised by +15C to {machine_state['motor_temp_c']}C.")
+                    
                 machine_state["cycles_completed"] += 1
                 
                 # Signal to machine3 that granules are ready, then CLEAR buffer (handed off)
                 amount_to_send = machine_state["output_buffer_kg"]
                 client.publish("factory/events/machine2_granules_ready",
-                             json.dumps({"batch_id": active_batch_id, "amount_kg": amount_to_send}))
+                             json.dumps({"batch_id": active_batch_id, "amount_kg": amount_to_send, "motor_temp_c": machine_state["motor_temp_c"]}))
                 machine_state["output_buffer_kg"] = 0  # Clear after publishing (handed off)
             
             elif machine_state["input_buffer_kg"] == 0:

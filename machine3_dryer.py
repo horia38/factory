@@ -10,7 +10,7 @@ machine_state = {
     "input_buffer_capacity_kg": 20.0,
     "output_buffer_kg": 0.0,  # Sends dried granules to machine4
     "output_buffer_capacity_kg": 15.0,
-    "target_heat_c": 85.0,
+    "target_heat_c": 80.0,
     "current_heat_c": 25.0,
     "moisture_content_pct": 5.0,
     "output_moisture_pct": 2.0,  # Moisture after drying (affects pill quality)
@@ -25,22 +25,19 @@ def on_message(client, userdata, msg):
     
     try:
         topic = msg.topic
-        print(f"[DEBUG M3] Received message on topic: {topic}")
         payload = json.loads(msg.payload.decode('utf-8'))
-        print(f"[DEBUG M3] Parsed payload: {payload}")
         
         if "commands/machine3" in topic:
             action = payload.get("action")
-            print(f"[DEBUG M3] Command action: {action}")
             
             if action == "start_batch":
                 active_batch_id = payload.get("batch_id")
                 machine_state["status"] = "DRYING"
-                machine_state["target_heat_c"] = payload.get("target_heat", 85.0)
+                machine_state["target_heat_c"] = payload.get("target_heat", 80.0)
                 print(f"\n✓ [M3 COMMAND] Starting batch {active_batch_id}, target heat: {machine_state['target_heat_c']}C, status now: {machine_state['status']}")
                 
             elif action == "set_heat":
-                machine_state["target_heat_c"] = payload.get("value", 85.0)
+                machine_state["target_heat_c"] = payload.get("value", 80.0)
                 print(f"\n[M3 COMMAND] Adjusting heat to {machine_state['target_heat_c']}C")
                 
             elif action == "pause":
@@ -49,19 +46,30 @@ def on_message(client, userdata, msg):
                 
         elif "machine2_granules_ready" in topic:
             # Machine2 signals granules are available
-            print(f"[DEBUG M3] Received granules_ready event")
             amount = payload.get("amount_kg", 0)
+            incoming_temp = payload.get("motor_temp_c", 55.0)
+            
+            # PHYSICS: Thermal Cascade
+            if incoming_temp > 70.0:
+                overshoot = (incoming_temp - 70.0) * 1.5
+                machine_state["current_heat_c"] = machine_state["target_heat_c"] + overshoot
+                print(f"[PHYSICS M3] Incoming granules too hot ({incoming_temp}C)! Heat overshooting to {machine_state['current_heat_c']}C")
+                
             if amount > 0:
                 transfer = min(amount, machine_state["input_buffer_capacity_kg"] - machine_state["input_buffer_kg"])
-                machine_state["input_buffer_kg"] += transfer
-                machine_state["moisture_content_pct"] = 5.0 + random.uniform(-0.5, 0.5)
-                
-                # Resume processing if we were waiting for input
-                if machine_state["status"] == "WAITING_INPUT" and active_batch_id:
-                    machine_state["status"] = "DRYING"
-                    print(f"[RESUME] Resuming DRYING, got {transfer} kg granules")
-                else:
-                    print(f"[INPUT] Received {transfer} kg granules. Moisture: {machine_state['moisture_content_pct']:.1f}%")
+                if transfer > 0:
+                    machine_state["input_buffer_kg"] += transfer
+                    machine_state["moisture_content_pct"] = 5.0 + random.uniform(-0.5, 0.5)
+                    
+                    if machine_state["status"] == "WAITING_INPUT" and active_batch_id:
+                        machine_state["status"] = "DRYING"
+                        print(f"[RESUME] Resuming DRYING, got {transfer} kg granules")
+                    else:
+                        print(f"[INPUT] Received {transfer} kg granules. Moisture: {machine_state['moisture_content_pct']:.1f}%")
+                    
+        elif "machine4_consumed" in topic:
+            consumed = payload.get("consumed_kg", 0)
+            machine_state["output_buffer_kg"] = max(0.0, machine_state["output_buffer_kg"] - consumed)
                 
     except json.JSONDecodeError as e:
         print(f"[ERROR M3] JSON decode failed: {e}")
@@ -73,6 +81,7 @@ client.on_message = on_message
 client.connect("localhost", 1883)
 client.subscribe("factory/commands/machine3")
 client.subscribe("factory/events/machine2_granules_ready")
+client.subscribe("factory/events/machine4_consumed")
 client.loop_start()
 
 print("Machine 3 (Dryer) Powered On...")
@@ -93,7 +102,7 @@ try:
         if machine_state["status"] == "DRYING" and active_batch_id:
             if machine_state["input_buffer_kg"] > 0 and machine_state["output_buffer_kg"] < machine_state["output_buffer_capacity_kg"]:
                 # Drying process: consume input, output drier material
-                dry_amount = min(2.0, machine_state["input_buffer_kg"])
+                dry_amount = min(1.0, machine_state["input_buffer_kg"])
                 
                 # Physics: Higher heat = lower moisture in output
                 # Base moisture decreases as heat increases
@@ -103,17 +112,20 @@ try:
                 machine_state["input_buffer_kg"] -= dry_amount
                 machine_state["output_buffer_kg"] += dry_amount
                 machine_state["cycles_completed"] += 1
+            
+            elif machine_state["input_buffer_kg"] == 0 and machine_state["output_buffer_kg"] == 0:
+                machine_state["status"] = "WAITING_INPUT"
                 
-                # Signal to machine4 that dried granules are ready, then CLEAR buffer (handed off)
-                amount_to_send = machine_state["output_buffer_kg"]
+            if machine_state["output_buffer_kg"] > 0:
+                # PHYSICS: Backpressure time penalty
+                machine_state["output_moisture_pct"] = max(0.0, machine_state["output_moisture_pct"] - 0.5)
+                if machine_state["output_moisture_pct"] < 1.0:
+                    print(f"[PHYSICS M3] Backpressure! Granules over-baking in buffer. Moisture dropped to {machine_state['output_moisture_pct']:.1f}%")
+                
                 client.publish("factory/events/machine3_granules_dried",
                              json.dumps({"batch_id": active_batch_id, 
-                                       "amount_kg": amount_to_send,
+                                       "amount_kg": machine_state["output_buffer_kg"],
                                        "moisture_pct": machine_state["output_moisture_pct"]}))
-                machine_state["output_buffer_kg"] = 0  # Clear after publishing (handed off)
-            
-            elif machine_state["input_buffer_kg"] == 0:
-                machine_state["status"] = "WAITING_INPUT"
         
         # Publish status periodically
         cycle += 1
