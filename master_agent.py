@@ -1,8 +1,35 @@
 import paho.mqtt.client as mqtt
 import json
 import time
+import os
+import glob
 from openai import OpenAI
 from datetime import datetime
+
+os.makedirs('logs', exist_ok=True)
+existing_logs = glob.glob('logs/log*.txt')
+if not existing_logs:
+    log_file_path = 'logs/log01.txt'
+else:
+    nums = []
+    for f in existing_logs:
+        try:
+            fname = os.path.basename(f)
+            num_str = fname.replace('log', '').replace('.txt', '')
+            nums.append(int(num_str))
+        except:
+            pass
+    next_num = max(nums) + 1 if nums else 1
+    log_file_path = f'logs/log{next_num:02d}.txt'
+
+def append_to_log(message):
+    try:
+        with open(log_file_path, "a", encoding="utf-8") as f:
+            f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}\n")
+    except Exception as e:
+        print(f"Failed to write log: {e}")
+
+append_to_log("Master AI Agent Started")
 
 # --- OpenAI Setup ---
 OPENAI_API_KEY = "[REDACTED_API_KEY]"
@@ -53,6 +80,8 @@ def on_message(client, userdata, msg):
             print(f"   Total pills produced: {total_pills}")
             print(f"   Final defect rate: {defect_rate:.2f}%")
             print(f"{'='*60}")
+            
+            append_to_log(f"BATCH COMPLETED: {batch_id} | Total Pills: {total_pills} | Final Defect Rate: {defect_rate:.2f}%")
             
             # Schedule next batch
             current_batch = None  # Reset so new batch will start on next cycle
@@ -150,22 +179,16 @@ def start_new_batch():
     
     return current_batch
 
-def apply_optimization(recommendation):
-    """Sends optimization commands to machines."""
-    machine = recommendation["machine"]
-    parameter = recommendation["parameter"]
-    suggested_value = recommendation["suggested_value"]
-    reason = recommendation["reason"]
+def apply_optimization(rec):
+    machine = rec.get("machine")
+    action = rec.get("parameter") or rec.get("action")
+    value = rec.get("suggested_value") or rec.get("value")
     
-    if parameter == "target_heat_c":
-        mqtt_client.publish("factory/commands/machine3", 
-                          json.dumps({"action": "set_heat", "value": suggested_value}))
-        print(f"   → Adjusted {machine} {parameter} to {suggested_value} ({reason})")
-    
-    elif parameter == "speed_rpm":
-        mqtt_client.publish("factory/commands/machine4",
-                          json.dumps({"action": "set_rpm", "value": suggested_value}))
-        print(f"   → Adjusted {machine} {parameter} to {suggested_value} ({reason})")
+    if machine and action and value is not None:
+        print(f"   → Adjusted {machine} {action} to {value}")
+        mqtt_client.publish(f"factory/commands/{machine}", json.dumps({"action": action, "value": value}))
+        mqtt_client.publish("factory/alerts/master_agent", json.dumps({"message": f"Issued command to {machine}: Set {action} = {value}"}))
+        append_to_log(f"ACTION TAKEN: Sent {action}={value} to {machine}")
 
 # --- MQTT Setup ---
 mqtt_client = mqtt.Client("MasterAgent")
@@ -215,11 +238,15 @@ try:
         # Call AI only if defect rate is high or production is critically low, and cooldown has passed
         if (current_defect_rate > 5.0 or current_speed < 500) and (current_time - last_ai_call_time) >= 60.0:
             if current_speed < 500:
-                print(f"\n⚠️ CRITICALLY LOW PRODUCTION DETECTED (M4 Speed: {current_speed} RPM). Consulting AI Master Coordinator...")
+                msg = f"Critically low production detected (M4 Speed: {current_speed} RPM)"
+                print(f"\n⚠️ {msg.upper()}. Consulting AI Master Coordinator...")
                 mqtt_client.publish("factory/alerts/master_agent", json.dumps({"message": f"Low production detected (Speed: {current_speed} RPM). Consulting AI API..."}))
+                append_to_log(f"FACTORY ALERT: {msg}")
             else:
-                print(f"\n⚠️ HIGH DEFECT RATE DETECTED ({current_defect_rate:.2f}%). Consulting AI Master Coordinator...")
+                msg = f"High defect rate detected ({current_defect_rate:.2f}%)"
+                print(f"\n⚠️ {msg.upper()}. Consulting AI Master Coordinator...")
                 mqtt_client.publish("factory/alerts/master_agent", json.dumps({"message": f"High defect rate detected ({current_defect_rate:.1f}%). Consulting AI API..."}))
+                append_to_log(f"FACTORY ALERT: {msg}")
             print(f"\n📊 PRODUCTION METRICS (Last 3 Batches):")
             if batch_history:
                 for batch in batch_history[-3:]:
@@ -227,10 +254,12 @@ try:
             else:
                 print(f"   No batches completed yet.")
             
+            append_to_log("AI CALL: Requesting optimization analysis from Master Coordinator...")
             ai_optimization = call_ai_optimization()
             last_ai_call_time = time.time()
             
             if ai_optimization:
+                append_to_log(f"AI RESPONSE: Analysis completed -> {ai_optimization.get('analysis', '')}")
                 print(f"\n[AI ANALYSIS]: {ai_optimization['analysis']}")
                 mqtt_client.publish("factory/alerts/master_agent", json.dumps({"message": f"AI ANALYSIS: {ai_optimization['analysis']}"}))
                 print(f"\n[APPLYING OPTIMIZATIONS]:")
