@@ -84,49 +84,25 @@ try:
                 max_process = min(1.0, machine_state["input_buffer_kg"])
                 process_amount = max_process
                 
-                # PHYSICS: Viscosity Spike due to Feed Starvation
-                # If incoming powder is unexpectedly low, ratio of liquid binder to powder is too high
-                expected_amount = 1.0
-                actual_amount = process_amount
+                # Mathematical Viscosity calculation
+                # Assume nominal input is 1.0 kg/cycle. If it drops, ratio of binder to powder increases, skyrocketing viscosity.
+                # Base viscosity is 350cP at 1.0kg. 
+                actual_amount = max(0.01, process_amount)
+                viscosity_target = 350.0 / actual_amount
                 
-                if actual_amount < expected_amount - 0.2:
-                    # Not enough powder -> too much liquid -> viscosity spikes!
-                    machine_state["viscosity_cp"] = min(800.0, 350.0 / actual_amount)
-                    machine_state["processing_speed_rpm"] = random.randint(750, 850)
-                
-                # PHYSICS: Viscosity calculation based on input amount
-                machine_state["viscosity_cp"] = round(350.0 / max(0.1, process_amount), 1)
+                # Smoothly transition viscosity (fluid inertia)
+                machine_state["viscosity_cp"] += (viscosity_target - machine_state["viscosity_cp"]) * 0.5
+                machine_state["viscosity_cp"] = round(min(1200.0, max(100.0, machine_state["viscosity_cp"])), 1)
                 
                 granule_output = process_amount * 0.95  # 95% efficiency
-                
                 machine_state["input_buffer_kg"] -= process_amount
                 machine_state["output_buffer_kg"] += granule_output
+                machine_state["cycles_completed"] += 1
                 
                 # Manage temporary RPM surge
                 if machine_state.get("surge_timer", 0) > 0:
                     machine_state["processing_speed_rpm"] = 1200
                     machine_state["surge_timer"] -= 1
-                else:
-                    machine_state["processing_speed_rpm"] = random.randint(750, 850)
-                
-                # PHYSICS: Motor temp increases if viscosity > 400cP or RPM is high
-                target_temp = 55.0 + (machine_state["processing_speed_rpm"] - 750) * 0.05
-                viscosity_penalty = 15.0 if machine_state["viscosity_cp"] > 400.0 else 0.0
-                target_temp += viscosity_penalty
-                
-                # Smooth temperature changes (heats quickly, cools slowly)
-                current_temp = machine_state["motor_temp_c"]
-                if current_temp < target_temp:
-                    machine_state["motor_temp_c"] = round(min(target_temp, current_temp + 3.0) + random.uniform(-0.5, 0.5), 1)
-                elif current_temp > target_temp:
-                    machine_state["motor_temp_c"] = round(max(target_temp, current_temp - 1.0) + random.uniform(-0.5, 0.5), 1)
-                else:
-                    machine_state["motor_temp_c"] = round(target_temp + random.uniform(-0.5, 0.5), 1)
-                
-                if viscosity_penalty > 0:
-                    print(f"[PHYSICS M2] Viscosity spike ({machine_state['viscosity_cp']} cP) from low input! Motor temp raised by +15C to {machine_state['motor_temp_c']}C.")
-                    
-                machine_state["cycles_completed"] += 1
                 
                 # Signal to machine3 that granules are ready, then CLEAR buffer (handed off)
                 amount_to_send = machine_state["output_buffer_kg"]
@@ -136,6 +112,20 @@ try:
             
             elif machine_state["input_buffer_kg"] == 0:
                 machine_state["status"] = "WAITING_INPUT"
+                
+        # Thermodynamics Loop (applies every cycle regardless of status)
+        # Heat generation = mechanical friction (viscosity * RPM)
+        # Heat dissipation = Newton's Law of Cooling
+        ambient_temp = 25.0
+        
+        if machine_state["status"] == "PROCESSING":
+            heat_generation = (machine_state["viscosity_cp"] / 350.0) * (machine_state["processing_speed_rpm"] / 800.0) * 2.0
+            machine_state["motor_temp_c"] += heat_generation
+            
+        # Cooling applies constantly
+        cooling = (machine_state["motor_temp_c"] - ambient_temp) * 0.1
+        machine_state["motor_temp_c"] -= cooling
+        machine_state["motor_temp_c"] = round(max(ambient_temp, machine_state["motor_temp_c"]), 1)
         
         # Publish status periodically
         cycle += 1

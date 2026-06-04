@@ -57,7 +57,21 @@ export default function FactoryDashboard() {
   }, [state.alerts]);
 
   const chatMessagesRef = useRef(null);
+  const scrollTimeoutRef = useRef(null);
   
+  // Track manual scrolling to pause auto-scroll
+  const handleScroll = () => {
+    if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+    
+    // Set a 30 second timer. If no scroll events happen for 30s, force scroll to bottom.
+    scrollTimeoutRef.current = setTimeout(() => {
+      const el = chatMessagesRef.current;
+      if (el) {
+        el.scrollTop = el.scrollHeight;
+      }
+    }, 30000);
+  };
+
   // Smart auto-scroll: only scroll if already near bottom
   useEffect(() => {
     const el = chatMessagesRef.current;
@@ -162,7 +176,7 @@ export default function FactoryDashboard() {
       {/* Right Side: Chat Box */}
       <div className="chat-box">
         <div className="chat-header">Master Agent Comm Link</div>
-        <div className="chat-messages" ref={chatMessagesRef}>
+        <div className="chat-messages" ref={chatMessagesRef} onScroll={handleScroll}>
           {(state.alerts || []).filter(a => a.topic.includes('master_agent') || a.topic.includes('events/batch_') || a.topic.includes('commands/')).map((msg, idx) => {
               const isCmd = msg.topic.includes('commands/');
               let displayMsg = '';

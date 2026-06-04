@@ -96,33 +96,26 @@ def call_ai_optimization():
     system_prompt = """
     You are the Master AI Coordinator for a pharmaceutical pill manufacturing pipeline.
     
-    PIPELINE PHYSICS & FAILURES:
-    1. Dispenser (M1) → outputs powder to Granulator
-       - CRITICAL FAILURE (trigger_m1_leak.py): Hopper drops to 15kg. M1 feed starves, dispensing is reduced by 30-50%, and M1 shortchanges M2.
-    2. Granulator (M2) → converts powder to granules, sends to Dryer
-       - CRITICAL: M1 shortchanging M2 causes viscosity spikes (>400cP).
-       - CRITICAL FAILURE (trigger_m2_rpm_surge.py): Forces RPM to 1200. High viscosity or RPM surges forces M2 motor to work harder, overheating it (>70C).
-    3. Dryer (M3) → controls heat, affects moisture content
-       - PARAMETERS YOU CAN CHANGE: target_heat_c (default 80.0)
-       - CRITICAL: M2 overheating causes M3's heat to overshoot, dropping moisture critically low (< 1.0%).
-       - Backpressure from M4 slowing down prevents M3 from emptying its output buffer, over-baking the granules (moisture drops by 0.5% every cycle).
-    4. Press (M4) → presses pills at variable RPM/vibration
-       - PARAMETERS YOU CAN CHANGE: speed_rpm (default 1000)
-       - CRITICAL: Moisture < 1.0% causes massive defect spikes (+15%).
-       - CRITICAL FAILURE (trigger_m4_vibration_jam.py): Forces speed down to 200 RPM, severely slowing consumption and causing backpressure in M3.
-    5. QC (M5) → inspects and coats pills, rejects defective ones
+    PIPELINE PHYSICS:
+    1. Dispenser (M1) → outputs powder to Granulator.
+    2. Granulator (M2) → converts powder to granules, sends to Dryer. Motor heat and viscosity fluctuate dynamically based on flow rates.
+       - PARAMETERS YOU CAN CHANGE: processing_speed_rpm
+    3. Dryer (M3) → controls heat, affects moisture content.
+       - PARAMETERS YOU CAN CHANGE: target_heat_c
+    4. Press (M4) → presses pills at variable RPM/vibration.
+       - PARAMETERS YOU CAN CHANGE: speed_rpm
+    5. QC (M5) → inspects and coats pills, rejects defective ones.
     
     YOUR OPTIMIZATION GOAL:
-    - Minimize defect rates by optimizing M3 target_heat_c and M4 speed_rpm.
-    - Identify if cascading failures (e.g. M1 leak -> M2 overheat -> M3 overbake -> M4 defects) are occurring.
-    - Provide 1-2 specific, actionable adjustments. Note that if a failure script is actively overriding a parameter, your changes might be ignored by the hardware, but you should attempt to mitigate via other parameters.
+    - Minimize defect rates and maximize production volume by optimizing parameters on M2, M3, and M4.
+    - Identify if cascading bottlenecks are occurring based on the live physics data.
+    - Provide 1-2 specific, actionable adjustments. If a hardware constraint overrides a parameter, attempt to mitigate via other parameters.
     
     RESPONSE FORMAT - ONLY valid JSON:
     {
       "analysis": "Explain the current issue and physics involved",
       "recommendations": [
-        {"machine": "machine3", "parameter": "target_heat_c", "current_value": 80, "suggested_value": 85, "reason": "increase to reduce moisture"},
-        {"machine": "machine4", "parameter": "speed_rpm", "current_value": 1000, "suggested_value": 950, "reason": "reduce vibration to improve quality"}
+        {"machine": "machineX", "parameter": "param_name", "suggested_value": 0, "reason": "why"}
       ]
     }
     """
@@ -155,24 +148,15 @@ def start_new_batch():
     print(f"🏭 STARTING NEW BATCH: {current_batch}")
     print(f"{'='*60}")
     
-    # Sequence: Start M1 → M2 → M3 → M4 → M5
-    print(f"📤 Publishing start_batch to machine1...")
+    # Don't reset AI optimized parameters (speed_rpm, target_heat_c), just start the batch
     mqtt_client.publish("factory/commands/machine1", json.dumps({"action": "start_batch", "batch_id": current_batch}))
     time.sleep(1)
-    
-    print(f"📤 Publishing start_batch to machine2...")
     mqtt_client.publish("factory/commands/machine2", json.dumps({"action": "start_batch", "batch_id": current_batch}))
     time.sleep(1)
-    
-    print(f"📤 Publishing start_batch to machine3...")
-    mqtt_client.publish("factory/commands/machine3", json.dumps({"action": "start_batch", "batch_id": current_batch, "target_heat": 80.0}))
+    mqtt_client.publish("factory/commands/machine3", json.dumps({"action": "start_batch", "batch_id": current_batch}))
     time.sleep(1)
-    
-    print(f"📤 Publishing start_batch to machine4...")
-    mqtt_client.publish("factory/commands/machine4", json.dumps({"action": "start_batch", "batch_id": current_batch, "speed_rpm": 1000}))
+    mqtt_client.publish("factory/commands/machine4", json.dumps({"action": "start_batch", "batch_id": current_batch}))
     time.sleep(1)
-    
-    print(f"📤 Publishing start_batch to machine5...")
     mqtt_client.publish("factory/commands/machine5", json.dumps({"action": "start_batch", "batch_id": current_batch}))
     
     print(f"✓ All batch start commands published!")
@@ -209,109 +193,144 @@ mqtt_client.publish("factory/commands/master_agent", json.dumps({"action": "clea
 print("Monitoring 5 production machines...")
 print("=" * 60)
 
-# --- Main Control Loop ---
-try:
-    time.sleep(3)  # Wait for machines to connect
-    
-    batch_wait_time = 0
+def main():
+    global last_ai_call_time, high_defect_start_time, low_production_start_time, m5_output_history, current_batch, batch_wait_time
     last_ai_call_time = 0
+    batch_wait_time = 0
+    high_defect_start_time = None
+    low_production_start_time = None
+    m5_output_history = []
     
-    while True:
-        # Check if all machines are online
-        if len(factory_state) < 5:
-            print(f"⏳ Waiting for machines to come online... ({len(factory_state)}/5)")
-            print(f"   Online: {list(factory_state.keys())}")
-            time.sleep(5)
-            continue
-        
-        # Start first batch
-        if current_batch is None:
-            print("\n✓ All machines online! Starting production...")
-            start_new_batch()
-            batch_wait_time = 0
-        
-        # Check defect rate and speed in real-time from M4
-        current_defect_rate = 0.0
-        current_speed = 1000
-        if "machine4" in factory_state:
-            current_defect_rate = factory_state["machine4"].get("defect_rate_pct", 0.0)
-            current_speed = factory_state["machine4"].get("speed_rpm", 1000)
+    # Send clear_alerts command to UI on startup
+    mqtt_client.publish("factory/alerts/master_agent", json.dumps({"action": "clear_alerts"}))
+    append_to_log("SYSTEM STARTUP: Master Agent initialized, alerts cleared.")
+    
+    start_new_batch()
+    
+    try:
+        while True:
+            time.sleep(1)
+            current_time = time.time()
             
-        current_time = time.time()
-        
-        # Call AI only if defect rate is high or production is critically low, and cooldown has passed
-        if (current_defect_rate > 5.0 or current_speed < 500) and (current_time - last_ai_call_time) >= 60.0:
-            if current_speed < 500:
-                msg = f"Critically low production detected (M4 Speed: {current_speed} RPM)"
-                print(f"\n⚠️ {msg.upper()}. Consulting AI Master Coordinator...")
-                mqtt_client.publish("factory/alerts/master_agent", json.dumps({"message": f"Low production detected (Speed: {current_speed} RPM). Consulting AI API..."}))
-                append_to_log(f"FACTORY ALERT: {msg}")
+            # Track M5 Output for Production Rate (OPS)
+            current_pills = 0
+            if "machine5" in factory_state:
+                current_pills = factory_state["machine5"].get("pills_coated", 0)
+            
+            m5_output_history.append((current_time, current_pills))
+            # Keep rolling window of 60 seconds
+            m5_output_history = [x for x in m5_output_history if current_time - x[0] <= 60.0]
+            
+            ops_60s = 0.0
+            ops_5s = 0.0
+            is_low_production = False
+            
+            if len(m5_output_history) > 1:
+                oldest = m5_output_history[0]
+                if current_time - oldest[0] > 0:
+                    ops_60s = (current_pills - oldest[1]) / (current_time - oldest[0])
+                    
+                # Find entry from ~5 seconds ago
+                five_sec_ago = [x for x in m5_output_history if current_time - x[0] <= 5.0]
+                if five_sec_ago:
+                    ref = five_sec_ago[0]
+                    if current_time - ref[0] > 0:
+                        ops_5s = (current_pills - ref[1]) / (current_time - ref[0])
+            
+            # Check for low production ONLY if we have at least 15 seconds of baseline
+            if len(m5_output_history) > 1 and (current_time - m5_output_history[0][0]) >= 15.0:
+                if ops_60s > 0 and ops_5s < (ops_60s * 0.5):
+                    is_low_production = True
+            
+            # Monitor states for anomalies
+            trigger_ai = False
+            alert_msg_text = ""
+            
+            current_defect_rate = factory_state.get("machine5", {}).get("actual_defect_rate_pct", 0)
+            
+            # Update timers
+            if current_defect_rate > 5.0:
+                if high_defect_start_time is None:
+                    high_defect_start_time = current_time
             else:
-                msg = f"High defect rate detected ({current_defect_rate:.2f}%)"
-                print(f"\n⚠️ {msg.upper()}. Consulting AI Master Coordinator...")
-                mqtt_client.publish("factory/alerts/master_agent", json.dumps({"message": f"High defect rate detected ({current_defect_rate:.1f}%). Consulting AI API..."}))
-                append_to_log(f"FACTORY ALERT: {msg}")
-            print(f"\n📊 PRODUCTION METRICS (Last 3 Batches):")
-            if batch_history:
-                for batch in batch_history[-3:]:
-                    print(f"   {batch['batch_id']}: {batch['total_pills']} pills, {batch['defect_rate_pct']:.2f}% defects")
+                high_defect_start_time = None
+                
+            if is_low_production:
+                if low_production_start_time is None:
+                    low_production_start_time = current_time
             else:
-                print(f"   No batches completed yet.")
-            
-            append_to_log("AI CALL: Requesting optimization analysis from Master Coordinator...")
-            ai_optimization = call_ai_optimization()
-            last_ai_call_time = time.time()
-            
-            if ai_optimization:
-                append_to_log(f"AI RESPONSE: Analysis completed -> {ai_optimization.get('analysis', '')}")
-                print(f"\n[AI ANALYSIS]: {ai_optimization['analysis']}")
-                mqtt_client.publish("factory/alerts/master_agent", json.dumps({"message": f"AI ANALYSIS: {ai_optimization['analysis']}"}))
-                print(f"\n[APPLYING OPTIMIZATIONS]:")
-                for rec in ai_optimization.get("recommendations", []):
-                    apply_optimization(rec)
-        
-        batch_wait_time += 1
-        
-        # Auto-start new batch after completion
-        if current_batch is None and len(factory_state) >= 5:
-            print("\n⏳ Starting new batch in 3 seconds...")
-            time.sleep(3)
-            start_new_batch()
-            batch_wait_time = 0
-        
-        # Check if current batch is complete: pipeline empty and pills coated
-        if current_batch is not None and "machine5" in factory_state:
-            m5 = factory_state["machine5"]
-            m4 = factory_state["machine4"]
-            m3 = factory_state.get("machine3", {"output_buffer_kg": 0, "input_buffer_kg": 0})
-            m2 = factory_state.get("machine2", {"output_buffer_kg": 0, "input_buffer_kg": 0})
-            m1 = factory_state.get("machine1", {"output_buffer_kg": 0, "batch_dispensed_kg": 0.0})
-            
-            # Since M1 stops after dispensing 20kg, eventually everything else empties out
-            if (m5["pills_coated"] > 0 and 
-                m5["input_buffer_pills"] == 0 and 
-                m4["input_buffer_kg"] == 0 and m4.get("output_buffer_pills", 0) == 0 and
-                m3["input_buffer_kg"] == 0 and m3["output_buffer_kg"] == 0 and
-                m2["input_buffer_kg"] == 0 and m2["output_buffer_kg"] == 0 and
-                m1["output_buffer_kg"] == 0 and 
-                m1.get("batch_dispensed_kg", 0.0) >= 20.0):
-                
-                print(f"\n🔄 Pipeline empty. Batch {current_batch} processing complete!")
-                
-                # Manually trigger batch_completed event for the system
-                mqtt_client.publish("factory/events/batch_completed", json.dumps({
-                    "batch_id": current_batch,
-                    "total_pills": m5["pills_coated"],
-                    "defect_rate_pct": m5.get("actual_defect_rate_pct", 0.0)
-                }))
-                
-                time.sleep(5)
-                start_new_batch()
-                batch_wait_time = 0
-        
-        time.sleep(3)
+                low_production_start_time = None
 
-except KeyboardInterrupt:
+            # Check if condition persisted for 5 seconds
+            if high_defect_start_time and (current_time - high_defect_start_time) >= 5.0:
+                trigger_ai = True
+                alert_msg_text = f"High defect rate detected ({current_defect_rate:.2f}%) persisting > 5s"
+                
+            elif low_production_start_time and (current_time - low_production_start_time) >= 5.0:
+                trigger_ai = True
+                alert_msg_text = f"Critically low production detected (5s OPS: {ops_5s:.1f} vs 60s avg: {ops_60s:.1f}) persisting > 5s"
+
+            if trigger_ai and (current_time - last_ai_call_time) >= 60.0:
+                print(f"\n⚠️ {alert_msg_text}. Consulting AI API...")
+                mqtt_client.publish("factory/alerts/master_agent", json.dumps({"message": f"{alert_msg_text}. Consulting AI API..."}))
+                append_to_log(f"FACTORY ALERT: {alert_msg_text}")
+                
+                print(f"\n📊 PRODUCTION METRICS (Last 3 Batches):")
+                if batch_history:
+                    for batch in batch_history[-3:]:
+                        print(f"   {batch['batch_id']}: {batch['total_pills']} pills, {batch['defect_rate_pct']:.2f}% defects")
+                else:
+                    print(f"   No batches completed yet.")
+                
+                append_to_log("AI CALL: Requesting optimization analysis from Master Coordinator...")
+                ai_optimization = call_ai_optimization()
+                last_ai_call_time = time.time()
+                
+                if ai_optimization:
+                    append_to_log(f"AI RESPONSE: Analysis completed -> {ai_optimization.get('analysis', '')}")
+                    print(f"\n[AI ANALYSIS]: {ai_optimization['analysis']}")
+                    mqtt_client.publish("factory/alerts/master_agent", json.dumps({"message": f"AI ANALYSIS: {ai_optimization['analysis']}"}))
+                    print(f"\n[APPLYING OPTIMIZATIONS]:")
+                    for rec in ai_optimization.get("recommendations", []):
+                        apply_optimization(rec)
+            
+            # -- Loop continuation code for batching --
+            batch_wait_time += 1
+            
+            # Auto-start new batch after completion
+            if current_batch is None and len(factory_state) >= 5:
+                if batch_wait_time % 3 == 0:
+                    print("\n⏳ Starting new batch...")
+                    start_new_batch()
+                    batch_wait_time = 0
+            
+            # Check if current batch is complete: pipeline empty and pills coated
+            if current_batch is not None and "machine5" in factory_state:
+                m5 = factory_state["machine5"]
+                m4 = factory_state["machine4"]
+                m3 = factory_state.get("machine3", {"output_buffer_kg": 0, "input_buffer_kg": 0})
+                m2 = factory_state.get("machine2", {"output_buffer_kg": 0, "input_buffer_kg": 0})
+                m1 = factory_state.get("machine1", {"output_buffer_kg": 0, "batch_dispensed_kg": 0.0})
+                
+                # Since M1 stops after dispensing 20kg, eventually everything else empties out
+                if (m5["pills_coated"] > 0 and 
+                    m5["input_buffer_pills"] == 0 and 
+                    m4["input_buffer_kg"] == 0 and m4.get("output_buffer_pills", 0) == 0 and
+                    m3["input_buffer_kg"] == 0 and m3["output_buffer_kg"] == 0 and
+                    m2["input_buffer_kg"] == 0 and m2["output_buffer_kg"] == 0 and
+                    m1["output_buffer_kg"] == 0 and 
+                    m1.get("batch_dispensed_kg", 0.0) >= 20.0):
+                    
+                    print(f"\n🔄 Pipeline empty. Batch {current_batch} processing complete!")
+                    
+                    # Manually trigger batch_completed event for the system
+                    mqtt_client.publish("factory/events/batch_completed", json.dumps({
+                        "batch_id": current_batch,
+                        "total_pills": m5["pills_coated"],
+                        "defect_rate_pct": m5.get("actual_defect_rate_pct", 0)
+                    }))
+
+    except KeyboardInterrupt:
     print("\n\n⛔ Shutting down Master Agent...")
     print(f"📈 Total batches completed: {len(batch_history)}")
     if batch_history:
