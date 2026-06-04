@@ -50,7 +50,7 @@ def on_message(client, userdata, msg):
                 machine_state["speed_rpm"] = machine_state["target_rpm"]
                 print(f"\n✓ [M4 COMMAND] Starting batch {active_batch_id}, speed: {machine_state['speed_rpm']} RPM, status now: {machine_state['status']}")
                 
-            elif action == "set_rpm":
+            elif action in ("set_rpm", "speed_rpm"):
                 machine_state["target_rpm"] = payload.get("value", 1000)
                 print(f"\n[M4 COMMAND] Adjusting target speed to {machine_state['target_rpm']} RPM")
                 

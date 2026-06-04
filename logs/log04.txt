@@ -43,3 +43,10 @@
 [2026-06-04 02:19:14] ACTION TAKEN: Sent speed_rpm=950 to machine4
 [2026-06-04 02:19:20] BATCH COMPLETED: BATCH_008 | Total Pills: 3678 | Final Defect Rate: 0.00%
 [2026-06-04 02:20:32] BATCH COMPLETED: BATCH_009 | Total Pills: 3742 | Final Defect Rate: 0.00%
+[2026-06-04 02:21:44] BATCH COMPLETED: BATCH_010 | Total Pills: 3764 | Final Defect Rate: 1.05%
+[2026-06-04 02:22:29] FACTORY ALERT: High defect rate detected (16.99%)
+[2026-06-04 02:22:29] AI CALL: Requesting optimization analysis from Master Coordinator...
+[2026-06-04 02:22:34] AI RESPONSE: Analysis completed -> The current status of the manufacturing pipeline indicates a potential risk of cascading failures. Machine 2 (Granulator) is processing with a viscosity of 350 cP, which is within acceptable limits but may become problematic if M1 shortchanges it. There is a critical failure risk in M3 (Dryer) if M2 overheats due to M1 shortchanging M2, as it could lead to a moisture drop below 1%. Currently, M3 has a moisture content of 4.63%, which is acceptable, but vigilance is necessary. Meanwhile, M4 (Pill Press) shows a high defect rate of approximately 16.99%, likely exacerbated by low moisture content from M3, and also potential backpressure due to insufficient input material from M2, which may lead to an increase in vibration and defect rates.
+[2026-06-04 02:22:34] ACTION TAKEN: Sent target_heat_c=78 to machine3
+[2026-06-04 02:22:34] ACTION TAKEN: Sent speed_rpm=950 to machine4
+[2026-06-04 02:22:58] BATCH COMPLETED: BATCH_011 | Total Pills: 3741 | Final Defect Rate: 0.00%
