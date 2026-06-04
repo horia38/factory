@@ -46,6 +46,12 @@ def on_message(client, userdata, msg):
                 machine_state["status"] = "IDLE"
                 print(f"\n[M2 COMMAND] Paused")
                 
+            elif action in ("set_rpm", "processing_speed_rpm"):
+                val = payload.get("value")
+                if val is not None:
+                    machine_state["target_speed_rpm"] = float(val)
+                    print(f"\n[M2 COMMAND] Target speed set to {val} RPM")
+                
         elif "machine1_powder_ready" in topic:
             # Machine1 signals that powder is available
             amount = payload.get("amount_kg", 0)
@@ -103,6 +109,10 @@ try:
                 if machine_state.get("surge_timer", 0) > 0:
                     machine_state["processing_speed_rpm"] = 1200
                     machine_state["surge_timer"] -= 1
+                else:
+                    target_rpm = machine_state.get("target_speed_rpm", 800)
+                    wander = target_rpm * 0.1
+                    machine_state["processing_speed_rpm"] = int(target_rpm + random.uniform(-wander, wander))
                 
                 # Signal to machine3 that granules are ready, then CLEAR buffer (handed off)
                 amount_to_send = machine_state["output_buffer_kg"]

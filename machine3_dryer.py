@@ -101,16 +101,23 @@ try:
         # Dry granules if we have input and heat is up
         if machine_state["status"] == "DRYING" and active_batch_id:
             if machine_state["input_buffer_kg"] > 0 and machine_state["output_buffer_kg"] < machine_state["output_buffer_capacity_kg"]:
-                # Drying process: consume input, output drier material
-                dry_amount = min(1.0, machine_state["input_buffer_kg"])
+                # Process 1.0 kg per cycle
+                process_amount = min(1.0, machine_state["input_buffer_kg"])
                 
-                # Physics: Higher heat = lower moisture in output
-                # Base moisture decreases as heat increases
+                # Update current heat with 5% wander
+                target_heat = machine_state.get("target_heat_c", 80.0)
+                wander = target_heat * 0.05
+                # Only apply wander if not in thermal cascade overshoot
+                if "current_heat_c" not in machine_state or machine_state["current_heat_c"] < target_heat + 10:
+                    machine_state["current_heat_c"] = round(target_heat + random.uniform(-wander, wander), 1)
+                
+                # PHYSICS: Moisture reduction depends on heat and time (each cycle reduces moisture by ~1.5%)
+                heat_efficiency = machine_state["current_heat_c"] / 80.0
                 base_moisture = 10.0 - (machine_state["current_heat_c"] - 25.0) * 0.15
                 machine_state["output_moisture_pct"] = max(0.5, base_moisture + random.uniform(-0.3, 0.3))
                 
-                machine_state["input_buffer_kg"] -= dry_amount
-                machine_state["output_buffer_kg"] += dry_amount
+                machine_state["input_buffer_kg"] -= process_amount
+                machine_state["output_buffer_kg"] += process_amount
                 machine_state["cycles_completed"] += 1
             
             elif machine_state["input_buffer_kg"] == 0 and machine_state["output_buffer_kg"] == 0:

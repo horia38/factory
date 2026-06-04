@@ -115,11 +115,15 @@ try:
             else:
                 machine_state["speed_rpm"] = 200
         else:
-            # Gradually stabilize to target
-            if machine_state["speed_rpm"] < machine_state["target_rpm"]:
-                machine_state["speed_rpm"] = min(machine_state["target_rpm"], machine_state["speed_rpm"] + 50)
-            elif machine_state["speed_rpm"] > machine_state["target_rpm"]:
-                machine_state["speed_rpm"] = max(machine_state["target_rpm"], machine_state["speed_rpm"] - 50)
+            # Gradually stabilize to target with 10% wander
+            if machine_state["speed_rpm"] < machine_state["target_rpm"] - 50:
+                machine_state["speed_rpm"] += 50
+            elif machine_state["speed_rpm"] > machine_state["target_rpm"] + 50:
+                machine_state["speed_rpm"] -= 50
+            else:
+                target = machine_state["target_rpm"]
+                wander = target * 0.1
+                machine_state["speed_rpm"] = int(target + random.uniform(-wander, wander))
 
         base_vib = (machine_state["speed_rpm"] / 1000) * 75.0
         machine_state["vibration_hz"] = round(base_vib + random.uniform(-3.0, 3.0), 1)
@@ -145,6 +149,9 @@ try:
                 if machine_state["input_moisture_pct"] < 1.0:
                     dryness_penalty += 15.0
                     print(f"[PHYSICS M4] Moisture critically low (<1.0%)! Defect rate spiking by +15%.")
+                elif machine_state["input_moisture_pct"] > 3.0:
+                    dryness_penalty += 50.0
+                    print(f"[PHYSICS M4] Moisture critically high (>3.0%)! Defect rate spiking by +50%.")
                     
                 vibration_penalty = max(0, (machine_state["vibration_hz"] - 75.0) * 0.05)
                 

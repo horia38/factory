@@ -154,7 +154,14 @@ export default function FactoryDashboard() {
           stats={[
             {label: 'SPEED', value: `${state.machine4.speed_rpm || '0'} RPM`},
             {label: 'VIBE', value: `${state.machine4.vibration_hz?.toFixed(1) || '0.0'} Hz`},
-            {label: 'MOISTURE', value: `${state.machine4.input_moisture_pct?.toFixed(1) || '0.0'} %`}
+            {
+              label: 'MOISTURE', 
+              value: (
+                <span style={{ color: (state.machine4.input_moisture_pct < 1.0 || state.machine4.input_moisture_pct > 3.0) ? '#ef4444' : 'inherit' }}>
+                  {`${state.machine4.input_moisture_pct?.toFixed(1) || '0.0'} %`}
+                </span>
+              )
+            }
           ]} 
         />
         <MachineBox 
