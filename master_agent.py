@@ -331,10 +331,13 @@ def main():
                     }))
 
     except KeyboardInterrupt:
-    print("\n\n⛔ Shutting down Master Agent...")
-    print(f"📈 Total batches completed: {len(batch_history)}")
-    if batch_history:
-        avg_defect = sum(b["defect_rate_pct"] for b in batch_history) / len(batch_history)
-        print(f"📉 Average defect rate: {avg_defect:.2f}%")
-    mqtt_client.loop_stop()
-    mqtt_client.disconnect()
+        print("\n\n⛔ Shutting down Master Agent...")
+        print(f"📈 Total batches completed: {len(batch_history)}")
+        if batch_history:
+            avg_defect = sum(b["defect_rate_pct"] for b in batch_history) / len(batch_history)
+            print(f"📉 Average defect rate: {avg_defect:.2f}%")
+        mqtt_client.loop_stop()
+        mqtt_client.disconnect()
+
+if __name__ == "__main__":
+    main()
