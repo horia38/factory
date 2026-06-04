@@ -43,6 +43,7 @@ batch_history = []
 
 def on_message(client, userdata, msg):
     """Updates factory state from machine status broadcasts."""
+    global current_batch
     topic = msg.topic
     try:
         payload = json.loads(msg.payload.decode('utf-8'))
@@ -212,35 +213,40 @@ def main():
             time.sleep(1)
             current_time = time.time()
             
-            # Track M5 Output for Production Rate (OPS)
-            current_pills = 0
-            if "machine5" in factory_state:
-                current_pills = factory_state["machine5"].get("pills_coated", 0)
-            
-            m5_output_history.append((current_time, current_pills))
-            # Keep rolling window of 60 seconds
-            m5_output_history = [x for x in m5_output_history if current_time - x[0] <= 60.0]
-            
-            ops_60s = 0.0
-            ops_5s = 0.0
             is_low_production = False
             
-            if len(m5_output_history) > 1:
-                oldest = m5_output_history[0]
-                if current_time - oldest[0] > 0:
-                    ops_60s = (current_pills - oldest[1]) / (current_time - oldest[0])
-                    
-                # Find entry from ~5 seconds ago
-                five_sec_ago = [x for x in m5_output_history if current_time - x[0] <= 5.0]
-                if five_sec_ago:
-                    ref = five_sec_ago[0]
-                    if current_time - ref[0] > 0:
-                        ops_5s = (current_pills - ref[1]) / (current_time - ref[0])
-            
-            # Check for low production ONLY if we have at least 15 seconds of baseline
-            if len(m5_output_history) > 1 and (current_time - m5_output_history[0][0]) >= 15.0:
-                if ops_60s > 0 and ops_5s < (ops_60s * 0.5):
-                    is_low_production = True
+            if current_batch:
+                # Track M5 Output for Production Rate (OPS)
+                current_pills = 0
+                if "machine5" in factory_state:
+                    current_pills = factory_state["machine5"].get("pills_coated", 0)
+                
+                m5_output_history.append((current_time, current_pills))
+                # Keep rolling window of 60 seconds
+                m5_output_history = [x for x in m5_output_history if current_time - x[0] <= 60.0]
+                
+                ops_60s = 0.0
+                ops_5s = 0.0
+                
+                if len(m5_output_history) > 1:
+                    oldest = m5_output_history[0]
+                    if current_time - oldest[0] > 0:
+                        ops_60s = (current_pills - oldest[1]) / (current_time - oldest[0])
+                        
+                    # Find entry from ~5 seconds ago
+                    five_sec_ago = [x for x in m5_output_history if current_time - x[0] <= 5.0]
+                    if five_sec_ago:
+                        ref = five_sec_ago[0]
+                        if current_time - ref[0] > 0:
+                            ops_5s = (current_pills - ref[1]) / (current_time - ref[0])
+                
+                # Check for low production ONLY if we have at least 15 seconds of baseline
+                if len(m5_output_history) > 1 and (current_time - m5_output_history[0][0]) >= 15.0:
+                    if ops_60s > 0 and ops_5s < (ops_60s * 0.5):
+                        is_low_production = True
+            else:
+                # Clear history when no batch is running
+                m5_output_history.clear()
             
             # Monitor states for anomalies
             trigger_ai = False
@@ -248,17 +254,21 @@ def main():
             
             current_defect_rate = factory_state.get("machine5", {}).get("actual_defect_rate_pct", 0)
             
-            # Update timers
-            if current_defect_rate > 5.0:
-                if high_defect_start_time is None:
-                    high_defect_start_time = current_time
+            if current_batch:
+                # Update timers
+                if current_defect_rate > 5.0:
+                    if high_defect_start_time is None:
+                        high_defect_start_time = current_time
+                else:
+                    high_defect_start_time = None
+                    
+                if is_low_production:
+                    if low_production_start_time is None:
+                        low_production_start_time = current_time
+                else:
+                    low_production_start_time = None
             else:
                 high_defect_start_time = None
-                
-            if is_low_production:
-                if low_production_start_time is None:
-                    low_production_start_time = current_time
-            else:
                 low_production_start_time = None
 
             # Check if condition persisted for 5 seconds
