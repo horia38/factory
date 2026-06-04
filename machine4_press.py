@@ -46,9 +46,9 @@ def on_message(client, userdata, msg):
             if action == "start_batch":
                 active_batch_id = payload.get("batch_id")
                 machine_state["status"] = "PRESSING"
-                machine_state["target_rpm"] = payload.get("speed_rpm", 1000)
-                machine_state["speed_rpm"] = machine_state["target_rpm"]
-                print(f"\n✓ [M4 COMMAND] Starting batch {active_batch_id}, speed: {machine_state['speed_rpm']} RPM, status now: {machine_state['status']}")
+                if "speed_rpm" in payload:
+                    machine_state["target_rpm"] = payload.get("speed_rpm")
+                print(f"\n✓ [M4 COMMAND] Starting batch {active_batch_id}, speed: {machine_state.get('speed_rpm', 1000)} RPM, status now: {machine_state['status']}")
                 
             elif action in ("set_rpm", "speed_rpm"):
                 machine_state["target_rpm"] = payload.get("value", 1000)

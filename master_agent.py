@@ -122,12 +122,19 @@ def call_ai_optimization():
     """
 
     try:
+        # Filter state for AI: No targets, no buffers, no M1
+        clean_state = {}
+        for m, state in factory_state.items():
+            if m == "machine1": 
+                continue
+            clean_state[m] = {k: v for k, v in state.items() if "target" not in k and "buffer" not in k and "capacity" not in k}
+            
         response = ai_client.chat.completions.create(
             model="gpt-4o-mini",
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Current Factory State: {json.dumps(factory_state)}\n\nBatch History: {json.dumps(batch_history[-5:] if batch_history else [])}"}
+                {"role": "user", "content": f"Current Factory State: {json.dumps(clean_state)}\n\nBatch History: {json.dumps(batch_history[-5:] if batch_history else [])}"}
             ]
         )
         

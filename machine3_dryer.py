@@ -33,8 +33,9 @@ def on_message(client, userdata, msg):
             if action == "start_batch":
                 active_batch_id = payload.get("batch_id")
                 machine_state["status"] = "DRYING"
-                machine_state["target_heat_c"] = payload.get("target_heat", 80.0)
-                print(f"\n✓ [M3 COMMAND] Starting batch {active_batch_id}, target heat: {machine_state['target_heat_c']}C, status now: {machine_state['status']}")
+                if "target_heat" in payload:
+                    machine_state["target_heat_c"] = payload.get("target_heat")
+                print(f"\n✓ [M3 COMMAND] Starting batch {active_batch_id}, target heat: {machine_state.get('target_heat_c', 80.0)}C, status now: {machine_state['status']}")
                 
             elif action in ("set_heat", "target_heat_c"):
                 machine_state["target_heat_c"] = payload.get("value", 80.0)

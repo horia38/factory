@@ -92,9 +92,11 @@ try:
                 
                 # Mathematical Viscosity calculation
                 # Assume nominal input is 1.0 kg/cycle. If it drops, ratio of binder to powder increases, skyrocketing viscosity.
-                # Base viscosity is 350cP at 1.0kg. 
+                # Base viscosity is 350cP at 1.0kg and 800 RPM.
+                # Shear thickening fluid: Viscosity increases with higher RPM.
                 actual_amount = max(0.01, process_amount)
-                viscosity_target = 350.0 / actual_amount
+                speed_factor = machine_state["processing_speed_rpm"] / 800.0
+                viscosity_target = (350.0 * speed_factor) / actual_amount
                 
                 # Smoothly transition viscosity (fluid inertia)
                 machine_state["viscosity_cp"] += (viscosity_target - machine_state["viscosity_cp"]) * 0.5
