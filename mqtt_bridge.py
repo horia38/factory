@@ -64,7 +64,16 @@ async def handler(websocket):
     connected_clients.add(websocket)
     try:
         await websocket.send(json.dumps(factory_state))
-        await websocket.wait_closed()
+        async for message in websocket:
+            try:
+                cmd_data = json.loads(message)
+                topic = cmd_data.get("topic")
+                payload = cmd_data.get("payload")
+                if topic and payload:
+                    print(f"WebUI overriding {topic}: {payload}")
+                    mqtt_client.publish(topic, json.dumps(payload))
+            except json.JSONDecodeError:
+                pass
     except Exception as e:
         print(f"WebSocket Error: {e}")
     finally:

@@ -1,16 +1,82 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './index.css';
 
+const ControlCard = ({ id, machineId, title, label, action, needsValue, sendCommand }) => {
+  const [val, setVal] = useState('');
+  const [status, setStatus] = useState('');
+
+  const handleSend = () => {
+    sendCommand(machineId, action, needsValue ? val : undefined);
+    setVal('');
+    setStatus('Sent!');
+    setTimeout(() => setStatus(''), 2000);
+  };
+
+  return (
+    <div id={id} className="machine-box normal control-card">
+      <div className="machine-title">{title}</div>
+      <div className="control-group">
+        {needsValue ? (
+          <input 
+            type="text" 
+            placeholder={`Enter ${label}`} 
+            value={val} 
+            onChange={e => setVal(e.target.value)}
+            className="control-input"
+          />
+        ) : (
+          <div className="control-label">{label}</div>
+        )}
+        <button onClick={handleSend} className="control-btn">Send</button>
+      </div>
+      {status && <div className="control-status">{status}</div>}
+    </div>
+  );
+};
+
+function ControlPanel({ state, wsRef }) {
+  const sendCommand = (machineId, action, valueStr) => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    
+    const payload = { action };
+    if (valueStr !== undefined) {
+      const val = parseFloat(valueStr);
+      if (isNaN(val)) return;
+      payload.value = val;
+    }
+    
+    wsRef.current.send(JSON.stringify({
+      topic: `factory/commands/${machineId}`,
+      payload
+    }));
+  };
+
+  return (
+    <div className="factory-container">
+      <div className="machines-grid">
+        <ControlCard id="m1" machineId="machine1" title="Powder Dispenser" label="Refill Powder" action="refill" needsValue={false} sendCommand={sendCommand} />
+        <ControlCard id="m2" machineId="machine2" title="Granulator" label="Speed (RPM)" action="processing_speed_rpm" needsValue={true} sendCommand={sendCommand} />
+        <ControlCard id="m3" machineId="machine3" title="Dryer" label="Heat (°C)" action="target_heat_c" needsValue={true} sendCommand={sendCommand} />
+        <ControlCard id="m4" machineId="machine4" title="Pill Press" label="Speed (RPM)" action="speed_rpm" needsValue={true} sendCommand={sendCommand} />
+        <ControlCard id="m5" machineId="machine5" title="QC Coater" label="Refill Coating" action="refill_coating" needsValue={false} sendCommand={sendCommand} />
+      </div>
+    </div>
+  );
+}
+
 export default function FactoryDashboard() {
   const [state, setState] = useState({
     machine1: {}, machine2: {}, machine3: {}, machine4: {}, machine5: {}, alerts: []
   });
   const [aiGlows, setAiGlows] = useState({});
+  const [autoScrollPaused, setAutoScrollPaused] = useState(false);
+  const wsRef = useRef(null);
 
   useEffect(() => {
     let ws;
     const connect = () => {
       ws = new WebSocket('ws://localhost:8080');
+      wsRef.current = ws;
       ws.onmessage = (event) => {
         try { setState(JSON.parse(event.data)); } catch (e) {}
       };
@@ -63,27 +129,31 @@ export default function FactoryDashboard() {
   const handleScroll = () => {
     if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
     
+    const el = chatMessagesRef.current;
+    if (el) {
+       const isAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
+       setAutoScrollPaused(!isAtBottom);
+    }
+    
     // Set a 30 second timer. If no scroll events happen for 30s, force scroll to bottom.
     scrollTimeoutRef.current = setTimeout(() => {
-      const el = chatMessagesRef.current;
-      if (el) {
-        el.scrollTop = el.scrollHeight;
+      setAutoScrollPaused(false);
+      const el2 = chatMessagesRef.current;
+      if (el2) {
+        el2.scrollTop = el2.scrollHeight;
       }
     }, 30000);
   };
 
-  // Smart auto-scroll: only scroll if already near bottom
+  // Smart auto-scroll: only scroll if not paused
   useEffect(() => {
     const el = chatMessagesRef.current;
     if (!el) return;
     
-    // Check if scrolled near bottom (within 100px)
-    const isAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
-    
-    if (isAtBottom) {
+    if (!autoScrollPaused) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [state.alerts]);
+  }, [state.alerts, autoScrollPaused]);
 
   const getAlertStatus = (m) => {
     if (aiGlows[m]) return 'ai-command';
@@ -113,6 +183,11 @@ export default function FactoryDashboard() {
       </div>
     </div>
   );
+
+  const path = window.location.pathname;
+  if (path === '/controlpanel') {
+    return <ControlPanel state={state} wsRef={wsRef} />;
+  }
 
   return (
     <div className="factory-container">
@@ -193,8 +268,11 @@ export default function FactoryDashboard() {
                 displayMsg = msg.payload.message || JSON.stringify(msg.payload);
               }
               
+              const timeStr = new Date(msg.timestamp * 1000).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+              
               return (
                 <div key={idx} className={`chat-msg new-msg-flash ${isCmd ? 'cmd-msg' : ''}`} style={{animationDelay: '0s'}}>
+                  <span className="chat-time">[{timeStr}]</span>
                   <span className="chat-sender">{isCmd ? `[AI -> ${msg.topic.split('/').pop().toUpperCase()}]` : '[AI]'}</span> 
                   {displayMsg}
                 </div>
