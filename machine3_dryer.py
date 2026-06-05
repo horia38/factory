@@ -18,12 +18,21 @@ machine_state = {
 }
 
 active_batch_id = None
+batch_count = 0
+TIME_SCALE = 1.0
 
 def on_message(client, userdata, msg):
     """Handle commands and events."""
-    global active_batch_id
+    global active_batch_id, batch_count, TIME_SCALE
     
     try:
+        if msg.topic == "factory/commands/timescale":
+            try:
+                payload = json.loads(msg.payload.decode('utf-8'))
+                TIME_SCALE = float(payload.get("value", 1.0))
+            except: pass
+            return
+            
         topic = msg.topic
         payload = json.loads(msg.payload.decode('utf-8'))
         
@@ -81,6 +90,7 @@ client = mqtt.Client("Machine3_Dryer")
 client.on_message = on_message
 client.connect("localhost", 1883)
 client.subscribe("factory/commands/machine3")
+client.subscribe("factory/commands/timescale")
 client.subscribe("factory/events/machine2_granules_ready")
 client.subscribe("factory/events/machine4_consumed")
 client.loop_start()
@@ -102,8 +112,8 @@ try:
         # Dry granules if we have input and heat is up
         if machine_state["status"] == "DRYING" and active_batch_id:
             if machine_state["input_buffer_kg"] > 0 and machine_state["output_buffer_kg"] < machine_state["output_buffer_capacity_kg"]:
-                # Process 1.0 kg per cycle
-                process_amount = min(1.0, machine_state["input_buffer_kg"])
+                # Process up to 15.0 kg per cycle to absorb flow
+                process_amount = min(15.0, machine_state["input_buffer_kg"])
                 
                 # Update current heat with 5% wander
                 target_heat = machine_state.get("target_heat_c", 80.0)
@@ -112,9 +122,9 @@ try:
                 if "current_heat_c" not in machine_state or machine_state["current_heat_c"] < target_heat + 10:
                     machine_state["current_heat_c"] = round(target_heat + random.uniform(-wander, wander), 1)
                 
-                # PHYSICS: Moisture reduction depends on heat and time (each cycle reduces moisture by ~1.5%)
-                heat_efficiency = machine_state["current_heat_c"] / 80.0
-                base_moisture = 10.0 - (machine_state["current_heat_c"] - 25.0) * 0.15
+                # PHYSICS: Moisture reduction depends on heat and time
+                # New Overhaul: Default heat (80.0) yields exactly 10.0% moisture (perfect center of 8-12%)
+                base_moisture = 10.0 - (machine_state["current_heat_c"] - 80.0) * 0.5
                 machine_state["output_moisture_pct"] = max(0.5, base_moisture + random.uniform(-0.3, 0.3))
                 
                 machine_state["input_buffer_kg"] -= process_amount
@@ -140,7 +150,7 @@ try:
         if True:
             client.publish("factory/status/machine3", json.dumps(machine_state))
 
-        time.sleep(3)
+        time.sleep(3.0 / TIME_SCALE)
 
 except KeyboardInterrupt:
     client.loop_stop()

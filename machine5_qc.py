@@ -7,9 +7,9 @@ machine_state = {
     "machine_id": "M5_QC_Coater",
     "status": "IDLE",  # IDLE, INSPECTING, WAITING_INPUT
     "input_buffer_pills": 0,  # Receives pills from machine4
-    "input_buffer_capacity_pills": 1000,
+    "input_buffer_capacity_pills": 50000,
     "output_buffer_pills": 0,  # Finished coated pills
-    "output_buffer_capacity_pills": 900,
+    "output_buffer_capacity_pills": 10000,
     "defect_rate_input_pct": 0.5,  # From machine4
     "actual_defect_rate_pct": 0.5,  # After QC inspection
     "coating_fluid_liters": 50.0,
@@ -23,13 +23,20 @@ machine_state = {
 }
 
 active_batch_id = None
-incoming_defect_rate = 0.5
+TIME_SCALE = 1.0
 
 def on_message(client, userdata, msg):
     """Handle commands and events."""
-    global active_batch_id, incoming_defect_rate
+    global active_batch_id, TIME_SCALE
     
     try:
+        if msg.topic == "factory/commands/timescale":
+            try:
+                payload = json.loads(msg.payload.decode('utf-8'))
+                TIME_SCALE = float(payload.get("value", 1.0))
+            except: pass
+            return
+
         topic = msg.topic
         payload = json.loads(msg.payload.decode('utf-8'))
         
@@ -46,10 +53,6 @@ def on_message(client, userdata, msg):
                 machine_state["input_buffer_pills"] = 0
                 print(f"\n✓ [M5 COMMAND] Starting batch {active_batch_id}, status now: {machine_state['status']}")
                 
-            elif action == "refill_coating":
-                machine_state["coating_fluid_liters"] = machine_state["coating_fluid_capacity_liters"]
-                print(f"\n[M5 COMMAND] Refilled coating fluid to {machine_state['coating_fluid_liters']}L")
-                
             elif action == "pause":
                 machine_state["status"] = "IDLE"
                 print(f"\n[M5 COMMAND] Paused")
@@ -58,7 +61,6 @@ def on_message(client, userdata, msg):
             # Machine4 signals pills are ready for QC
             pill_count = payload.get("pill_count", 0)
             defect_rate = payload.get("defect_rate_pct", 0.5)
-            incoming_defect_rate = defect_rate
             
             if pill_count > 0:
                 transfer = min(pill_count, machine_state["input_buffer_capacity_pills"] - machine_state["input_buffer_pills"])
@@ -81,6 +83,7 @@ client = mqtt.Client("Machine5_QC")
 client.on_message = on_message
 client.connect("localhost", 1883)
 client.subscribe("factory/commands/machine5")
+client.subscribe("factory/commands/timescale")
 client.subscribe("factory/events/machine4_pills_ready")
 client.loop_start()
 
@@ -96,8 +99,9 @@ try:
         if machine_state["status"] == "INSPECTING" and active_batch_id:
             if machine_state["input_buffer_pills"] > 0 and machine_state["output_buffer_pills"] < machine_state["output_buffer_capacity_pills"] and machine_state["coating_fluid_liters"] > 0:
                 
-                # Process 200 pills at a time (1.0 kg equivalent)
-                pills_to_process = min(200, machine_state["input_buffer_pills"])
+                # Process up to 400 pills at a time to create a realistic backlog
+                pills_to_process = min(400, machine_state["input_buffer_pills"])
+                machine_state["last_pills_processed"] = pills_to_process
                 
                 # QC inspection: exact correlation to input defect rate
                 defect_prob = machine_state["defect_rate_input_pct"] / 100.0
@@ -108,7 +112,7 @@ try:
                 final_coated_pills = pills_passed
                 
                 # Consume coating fluid (0.5L per 50 pills)
-                coating_usage = 0.5
+                coating_usage = (pills_to_process / 50.0) * 0.5
                 machine_state["coating_fluid_liters"] -= coating_usage
                 
                 machine_state["input_buffer_pills"] -= pills_to_process
@@ -131,15 +135,23 @@ try:
                 
             if machine_state["input_buffer_pills"] == 0:
                 machine_state["status"] = "WAITING_INPUT"
+                machine_state["last_pills_processed"] = 0
             elif machine_state["coating_fluid_liters"] <= 0:
                 machine_state["status"] = "IDLE"
+                
+        # PHYSICS: Continuous steady reservoir pumping
+        # Pumps precisely 2.0L per cycle to match default consumption (1000 RPM in M4 -> 200 pills/cycle -> 2.0L consumption)
+        machine_state["coating_fluid_liters"] = min(
+            machine_state["coating_fluid_capacity_liters"],
+            machine_state["coating_fluid_liters"] + 2.0
+        )
         
         # Publish status periodically
         cycle += 1
         if True:
             client.publish("factory/status/machine5", json.dumps(machine_state))
 
-        time.sleep(3)
+        time.sleep(3.0 / TIME_SCALE)
 
 except KeyboardInterrupt:
     client.loop_stop()

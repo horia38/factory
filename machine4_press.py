@@ -20,15 +20,24 @@ machine_state = {
 }
 
 active_batch_id = None
+batch_count = 0
+TIME_SCALE = 1.0
 incoming_moisture = 2.0
 jam_active = False
 jam_timer = 0
 
 def on_message(client, userdata, msg):
     """Handle commands and events."""
-    global active_batch_id, incoming_moisture, jam_active, jam_timer
+    global active_batch_id, incoming_moisture, jam_active, jam_timer, batch_count, TIME_SCALE
     
     try:
+        if msg.topic == "factory/commands/timescale":
+            try:
+                payload = json.loads(msg.payload.decode('utf-8'))
+                TIME_SCALE = float(payload.get("value", 1.0))
+            except: pass
+            return
+            
         topic = msg.topic
         
         if "triggers/m4_vibration_jam" in topic:
@@ -50,7 +59,7 @@ def on_message(client, userdata, msg):
                     machine_state["target_rpm"] = payload.get("speed_rpm")
                 print(f"\n✓ [M4 COMMAND] Starting batch {active_batch_id}, speed: {machine_state.get('speed_rpm', 1000)} RPM, status now: {machine_state['status']}")
                 
-            elif action in ("set_rpm", "speed_rpm"):
+            elif action in ("set_rpm", "speed_rpm", "target_speed_rpm"):
                 machine_state["target_rpm"] = payload.get("value", 1000)
                 print(f"\n[M4 COMMAND] Adjusting target speed to {machine_state['target_rpm']} RPM")
                 
@@ -92,6 +101,7 @@ client = mqtt.Client("Machine4_Press")
 client.on_message = on_message
 client.connect("localhost", 1883)
 client.subscribe("factory/commands/machine4")
+client.subscribe("factory/commands/timescale")
 client.subscribe("factory/events/machine3_granules_dried")
 client.subscribe("factory/triggers/m4_vibration_jam")
 client.loop_start()
@@ -122,7 +132,7 @@ try:
                 machine_state["speed_rpm"] -= 50
             else:
                 target = machine_state["target_rpm"]
-                wander = target * 0.1
+                wander = target * 0.05
                 machine_state["speed_rpm"] = int(target + random.uniform(-wander, wander))
 
         base_vib = (machine_state["speed_rpm"] / 1000) * 75.0
@@ -134,28 +144,29 @@ try:
                 # Each kg of granules makes ~200 pills
                 pills_per_kg = 200
                 
-                # PHYSICS: Process amount is dependent on speed_rpm (1000 RPM -> 1.0 kg)
-                max_process = 1.0 * (machine_state["speed_rpm"] / 1000.0)
+                # PHYSICS: Process amount is capped at 15.0kg max to absorb flow, modulated by RPM
+                max_process = 15.0 * (machine_state["speed_rpm"] / 1000.0)
                 process_amount = min(max_process, machine_state["input_buffer_kg"])
                 pills_made = int(process_amount * pills_per_kg)
                 
-                # CRITICAL PHYSICS: Moisture and vibration affect defect rate
-                # Too dry (low moisture) + high vibration = crumbly pills
-                # Formula: base defect + (dryness penalty) + (vibration penalty)
-                base_defect = 0.3
-                dryness_penalty = 0 if machine_state["input_moisture_pct"] >= 1.5 else (1.5 - machine_state["input_moisture_pct"]) * 3.0
+                # CRITICAL PHYSICS: Moisture Overhaul (8-12% is perfectly safe)
+                # Vibration shakes off some surface moisture
+                final_moisture = max(0.0, incoming_moisture - (machine_state["vibration_hz"] / 100.0))
+                machine_state["input_moisture_pct"] = round(final_moisture, 2)
                 
-                # PHYSICS: Thermal Cascade Defect Spike
-                if machine_state["input_moisture_pct"] < 1.0:
-                    dryness_penalty += 15.0
-                    print(f"[PHYSICS M4] Moisture critically low (<1.0%)! Defect rate spiking by +15%.")
-                elif machine_state["input_moisture_pct"] > 3.0:
-                    dryness_penalty += 50.0
-                    print(f"[PHYSICS M4] Moisture critically high (>3.0%)! Defect rate spiking by +50%.")
+                moisture_penalty = 0.0
+                if final_moisture < 8.0:
+                    moisture_penalty = ((8.0 - final_moisture) / 8.0) * 50.0
+                    print(f"[PHYSICS M4] Moisture low ({final_moisture:.1f}%)! Defect rate spiking by +{moisture_penalty:.1f}%.")
+                elif final_moisture > 12.0:
+                    moisture_penalty = ((final_moisture - 12.0) / 38.0) * 100.0
+                    print(f"[PHYSICS M4] Moisture high ({final_moisture:.1f}%)! Defect rate spiking by +{moisture_penalty:.1f}%.")
                     
-                vibration_penalty = max(0, (machine_state["vibration_hz"] - 75.0) * 0.05)
+                # High speed linearly adds defects
+                speed_penalty = max(0, (machine_state["speed_rpm"] - 1000.0) * 0.02)
                 
-                machine_state["defect_rate_pct"] = base_defect + dryness_penalty + vibration_penalty
+                base_defect = 0.3
+                machine_state["defect_rate_pct"] = base_defect + moisture_penalty + speed_penalty
                 
                 machine_state["input_buffer_kg"] -= process_amount
                 machine_state["output_buffer_pills"] += pills_made
@@ -178,7 +189,7 @@ try:
         if True:
             client.publish("factory/status/machine4", json.dumps(machine_state))
 
-        time.sleep(3)
+        time.sleep(3.0 / TIME_SCALE)
 
 except KeyboardInterrupt:
     client.loop_stop()

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './index.css';
 
-const ControlCard = ({ id, machineId, title, label, action, needsValue, sendCommand }) => {
+const ControlCard = ({ id, machineId, title, label, action, needsValue, sendCommand, currentValue }) => {
   const [val, setVal] = useState('');
   const [status, setStatus] = useState('');
 
@@ -15,6 +15,7 @@ const ControlCard = ({ id, machineId, title, label, action, needsValue, sendComm
   return (
     <div id={id} className="machine-box normal control-card">
       <div className="machine-title">{title}</div>
+      {currentValue !== undefined && <div style={{ color: '#94a3b8', fontSize: '0.9rem', marginBottom: '10px' }}>Current: {currentValue}</div>}
       <div className="control-group">
         {needsValue ? (
           <input 
@@ -51,14 +52,62 @@ function ControlPanel({ state, wsRef }) {
     }));
   };
 
+  const sendTimeScale = (scale) => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(JSON.stringify({
+      topic: `factory/commands/timescale`,
+      payload: { value: scale }
+    }));
+  };
+
+  const [cooldown, setCooldown] = useState(30);
+  const [aiEnabled, setAiEnabled] = useState(true);
+
+  const sendCooldown = (val) => {
+    setCooldown(val);
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(JSON.stringify({
+      topic: `factory/commands/master_agent`,
+      payload: { action: 'set_ai_cooldown', value: val }
+    }));
+  };
+
+  const handleAiToggle = (enabled) => {
+    setAiEnabled(enabled);
+    if (enabled) {
+      sendCooldown(30);
+    } else {
+      sendCooldown(999999);
+    }
+  };
+
   return (
     <div className="factory-container">
+      <div style={{ padding: '20px', backgroundColor: '#1e293b', marginBottom: '20px', borderRadius: '8px', display: 'flex', gap: '15px', alignItems: 'center' }}>
+        <a href="/" style={{color: '#38bdf8', textDecoration: 'none', fontWeight: 'bold', marginRight: '20px'}}>&larr; Back to Dashboard</a>
+        <span style={{color: '#94a3b8'}}>Time Speed:</span>
+        <button onClick={() => sendTimeScale(1)} style={{padding: '5px 10px', backgroundColor: '#334155', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>1x</button>
+        <button onClick={() => sendTimeScale(2)} style={{padding: '5px 10px', backgroundColor: '#334155', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>2x</button>
+        <button onClick={() => sendTimeScale(5)} style={{padding: '5px 10px', backgroundColor: '#334155', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>5x</button>
+        <button onClick={() => sendTimeScale(10)} style={{padding: '5px 10px', backgroundColor: '#334155', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer'}}>10x</button>
+        <div style={{marginLeft: 'auto', display: 'flex', gap: '15px', alignItems: 'center'}}>
+          <label style={{color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '5px', cursor: 'pointer'}}>
+            <input type="checkbox" checked={aiEnabled} onChange={(e) => handleAiToggle(e.target.checked)} /> AI Enabled
+          </label>
+          {aiEnabled && (
+            <>
+              <span style={{color: '#94a3b8'}}>Cooldown: {cooldown}s</span>
+              <input type="range" min="1" max="30" step="1" value={cooldown} onChange={(e) => sendCooldown(parseInt(e.target.value))} />
+            </>
+          )}
+        </div>
+      </div>
       <div className="machines-grid">
-        <ControlCard id="m1" machineId="machine1" title="Powder Dispenser" label="Refill Powder" action="refill" needsValue={false} sendCommand={sendCommand} />
-        <ControlCard id="m2" machineId="machine2" title="Granulator" label="Speed (RPM)" action="processing_speed_rpm" needsValue={true} sendCommand={sendCommand} />
-        <ControlCard id="m3" machineId="machine3" title="Dryer" label="Heat (°C)" action="target_heat_c" needsValue={true} sendCommand={sendCommand} />
-        <ControlCard id="m4" machineId="machine4" title="Pill Press" label="Speed (RPM)" action="speed_rpm" needsValue={true} sendCommand={sendCommand} />
-        <ControlCard id="m5" machineId="machine5" title="QC Coater" label="Refill Coating" action="refill_coating" needsValue={false} sendCommand={sendCommand} />
+        <ControlCard id="m1" machineId="machine1" title="Powder Dispenser" label="Flow Rate (kg)" action="dispense_rate_kg_per_cycle" needsValue={true} sendCommand={sendCommand} currentValue={state.machine1?.dispense_rate_kg_per_cycle?.toFixed(1) || "1.0"} />
+        <ControlCard id="m2" machineId="machine2" title="Granulator" label="Speed (RPM)" action="target_speed_rpm" needsValue={true} sendCommand={sendCommand} currentValue={state.machine2?.target_speed_rpm?.toFixed(0) || state.machine2?.processing_speed_rpm?.toFixed(0) || "800"} />
+        <ControlCard id="m3" machineId="machine3" title="Dryer" label="Heat (°C)" action="target_heat_c" needsValue={true} sendCommand={sendCommand} currentValue={state.machine3?.target_heat_c?.toFixed(1) || state.machine3?.current_heat_c?.toFixed(1) || "80.0"} />
+        <ControlCard id="m4" machineId="machine4" title="Pill Press" label="Speed (RPM)" action="target_speed_rpm" needsValue={true} sendCommand={sendCommand} currentValue={state.machine4?.target_rpm?.toFixed(0) || state.machine4?.speed_rpm?.toFixed(0) || "1000"} />
+        <ControlCard id="m5" machineId="machine5" title="QC & Coating" label="Refill Fluid" action="refill_coating" needsValue={false} sendCommand={sendCommand} currentValue={`${state.machine5?.coating_fluid_liters?.toFixed(1) || "0.0"} L`} />
       </div>
     </div>
   );
@@ -81,10 +130,23 @@ export default function FactoryDashboard() {
         try { setState(JSON.parse(event.data)); } catch (e) {}
       };
       ws.onclose = () => setTimeout(connect, 2000);
+      ws.onerror = (error) => {
+        console.error('WebSocket Error:', error);
+      };
     };
     connect();
     return () => { if (ws) ws.close(); };
   }, []);
+
+  const sendTimeScale = (scale) => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(JSON.stringify({
+      topic: `factory/commands/timescale`,
+      payload: { value: scale }
+    }));
+  };
+
+  const navPath = window.location.pathname;
 
   const isM1Starved = state.machine1.hopper_level_kg < 20;
   const isM2Overheating = state.machine2.motor_temp_c > 70;
@@ -184,15 +246,22 @@ export default function FactoryDashboard() {
     </div>
   );
 
-  const path = window.location.pathname;
-  if (path === '/controlpanel') {
-    return <ControlPanel state={state} wsRef={wsRef} />;
-  }
+  const lastBatchAlert = [...(state.alerts || [])].reverse().find(a => a.topic && a.topic.includes('batch_completed'));
+  const lastBatchProduced = lastBatchAlert ? lastBatchAlert.payload.total_pills : 0;
+  const lastBatchDefect = lastBatchAlert ? lastBatchAlert.payload.defect_rate_pct : 0.0;
 
-  return (
-    <div className="factory-container">
-      
-      {/* Left Side: Machines Grid */}
+  const m5TotalInspected = state.machine5?.pills_inspected || 0;
+  const m5TotalRejected = state.machine5?.pills_rejected || 0;
+  const batchAverageDefectRate = m5TotalInspected > 0 ? (m5TotalRejected / m5TotalInspected) * 100 : 0.0;
+
+  const path = window.location.pathname;
+
+  return path === '/controlpanel' ? (
+    <ControlPanel state={state} wsRef={wsRef} />
+  ) : (
+      <div className="factory-container">
+        
+        {/* Left Side: Machines Grid */}
       <div className="machines-grid">
         <svg className="svg-layer">
           <line x1="330" y1="130" x2="650" y2="130" className={`flow-line ${m1Flow ? 'active' : ''}`} />
@@ -205,6 +274,7 @@ export default function FactoryDashboard() {
           id="m1" title="Powder Dispenser" alertStatus={getAlertStatus('m1')}
           stats={[
             {label: 'HOPPER', value: `${state.machine1.hopper_level_kg?.toFixed(1) || '0.0'} kg`},
+            {label: 'FLOW RATE', value: `${state.machine1.dispense_rate_kg_per_cycle?.toFixed(1) || '1.0'} kg`},
             {label: 'STATUS', value: state.machine1.status || 'OFFLINE'}
           ]} 
         />
@@ -232,7 +302,7 @@ export default function FactoryDashboard() {
             {
               label: 'MOISTURE', 
               value: (
-                <span style={{ color: (state.machine4.input_moisture_pct < 1.0 || state.machine4.input_moisture_pct > 3.0) ? '#ef4444' : 'inherit' }}>
+                <span style={{ color: (state.machine4.input_moisture_pct < 8.0 || state.machine4.input_moisture_pct > 12.0) ? '#ef4444' : 'inherit' }}>
                   {`${state.machine4.input_moisture_pct?.toFixed(1) || '0.0'} %`}
                 </span>
               )
@@ -244,8 +314,16 @@ export default function FactoryDashboard() {
           stats={[
             {label: 'YIELD', value: `${(100 - (state.machine5.actual_defect_rate_pct || 0)).toFixed(1)} %`},
             {label: 'DEFECTS', value: `${state.machine5.actual_defect_rate_pct?.toFixed(1) || '0.0'} %`},
+            {label: 'PROCESSING', value: `${state.machine5.input_buffer_pills || 0}`},
             {label: 'FLUID', value: `${state.machine5.coating_fluid_liters?.toFixed(1) || '0.0'} L`}
           ]} 
+        />
+        <MachineBox 
+          id="batch-stats" title="Batch Stats" alertStatus="normal"
+          stats={[
+            {label: 'PRODUCED', value: `${state.machine5.pills_coated || 0} pills`},
+            {label: 'DEFECT RATE', value: `${batchAverageDefectRate.toFixed(1)} %`}
+          ]}
         />
 
         <div className="legend">
@@ -280,6 +358,7 @@ export default function FactoryDashboard() {
             })}
         </div>
       </div>
-    </div>
+      </div>
   );
 }
+

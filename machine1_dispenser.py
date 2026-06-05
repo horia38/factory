@@ -18,12 +18,20 @@ machine_state = {
 
 active_batch_id = None
 batch_count = 0
+TIME_SCALE = 1.0
 
 def on_message(client, userdata, msg):
     """Handle commands from master agent."""
-    global active_batch_id, batch_count
+    global active_batch_id, batch_count, TIME_SCALE
     
     try:
+        if msg.topic == "factory/commands/timescale":
+            try:
+                payload = json.loads(msg.payload.decode('utf-8'))
+                TIME_SCALE = float(payload.get("value", 1.0))
+            except: pass
+            return
+            
         if "triggers/m1_leak" in msg.topic:
             machine_state["hopper_level_kg"] = 15.0
             machine_state["leak_triggered"] = True
@@ -44,6 +52,13 @@ def on_message(client, userdata, msg):
             machine_state["status"] = "IDLE"
             print(f"\n[M1 COMMAND] Paused")
             
+        elif action == "dispense_rate_kg_per_cycle":
+            try:
+                machine_state["dispense_rate_kg_per_cycle"] = float(command.get("value"))
+                print(f"\n[M1 COMMAND] Dispense rate set to {machine_state['dispense_rate_kg_per_cycle']}")
+            except Exception as e:
+                print(f"[ERROR M1] Failed to parse dispense rate: {e}")
+                
         elif action == "refill":
             machine_state["hopper_level_kg"] = machine_state["hopper_capacity_kg"]
             machine_state["status"] = "IDLE"
@@ -71,6 +86,7 @@ client = mqtt.Client("Machine1_Dispenser")
 client.on_message = on_message
 client.connect("localhost", 1883)
 client.subscribe("factory/commands/machine1")
+client.subscribe("factory/commands/timescale")
 client.subscribe("factory/events/batch_completed")  # Listen for batch completion to reset
 client.subscribe("factory/triggers/m1_leak")
 client.loop_start()
@@ -85,8 +101,8 @@ try:
             print(f"[DEBUG M1] Status={machine_state['status']}, active_batch_id={active_batch_id}, hopper={machine_state['hopper_level_kg']:.1f}kg, buffer={machine_state['output_buffer_kg']:.1f}kg")
         
         if machine_state["status"] == "DISPENSING" and active_batch_id:
-            # Stop dispensing if we reached batch limit (20kg) to allow the batch to finish
-            if machine_state.get("batch_dispensed_kg", 0.0) >= 20.0:
+            # Stop dispensing if we reached batch limit (100kg) to allow the batch to finish
+            if machine_state.get("batch_dispensed_kg", 0.0) >= 100.0:
                 pass # Wait for pipeline to finish and new batch to start
             elif machine_state["hopper_level_kg"] > 0 and machine_state["output_buffer_kg"] < machine_state["output_buffer_capacity_kg"]:
                 base_dispense = min(
@@ -127,8 +143,8 @@ try:
         cycle += 1
         if True:
             client.publish("factory/status/machine1", json.dumps(machine_state))
-
-        time.sleep(3)
+            
+        time.sleep(3.0 / TIME_SCALE)
 
 except KeyboardInterrupt:
     client.loop_stop()

@@ -63,7 +63,8 @@ body {
 .machine-box {
   position: absolute;
   width: 280px;
-  height: 160px;
+  height: auto;
+  min-height: 160px;
   background: rgba(22, 24, 33, 0.85);
   backdrop-filter: blur(12px);
   border: 1px solid #2a2d3e;
@@ -106,6 +107,7 @@ body {
 #m3 { top: 350px; left: 650px; }
 #m4 { top: 350px; left: 50px; }
 #m5 { top: 650px; left: 50px; }
+#batch-stats { top: 650px; left: 350px; }
 
 .machine-title {
   text-align: center;

@@ -18,12 +18,21 @@ machine_state = {
 }
 
 active_batch_id = None
+batch_count = 0
+TIME_SCALE = 1.0
 
 def on_message(client, userdata, msg):
     """Handle commands from master or status updates from machine1."""
-    global active_batch_id
+    global active_batch_id, batch_count, TIME_SCALE
     
     try:
+        if msg.topic == "factory/commands/timescale":
+            try:
+                payload = json.loads(msg.payload.decode('utf-8'))
+                TIME_SCALE = float(payload.get("value", 1.0))
+            except: pass
+            return
+            
         topic = msg.topic
         
         if "triggers/m2_rpm_surge" in topic:
@@ -46,7 +55,7 @@ def on_message(client, userdata, msg):
                 machine_state["status"] = "IDLE"
                 print(f"\n[M2 COMMAND] Paused")
                 
-            elif action in ("set_rpm", "processing_speed_rpm"):
+            elif action in ("set_rpm", "processing_speed_rpm", "target_speed_rpm"):
                 val = payload.get("value")
                 if val is not None:
                     machine_state["target_speed_rpm"] = float(val)
@@ -71,6 +80,7 @@ client = mqtt.Client("Machine2_Granulator")
 client.on_message = on_message
 client.connect("localhost", 1883)
 client.subscribe("factory/commands/machine2")
+client.subscribe("factory/commands/timescale")
 client.subscribe("factory/events/machine1_powder_ready")
 client.subscribe("factory/triggers/m2_rpm_surge")
 client.loop_start()
@@ -86,15 +96,16 @@ try:
         # Process powder if we have input and we're active
         if machine_state["status"] == "PROCESSING" and active_batch_id:
             if machine_state["input_buffer_kg"] > 0 and machine_state["output_buffer_kg"] < machine_state["output_buffer_capacity_kg"]:
-                # Processing speed
-                max_process = min(1.0, machine_state["input_buffer_kg"])
-                process_amount = max_process
+                # PHYSICS: Process amount scales to absorb M1 flow up to 15kg, modulated by RPM
+                max_process = 15.0 * (machine_state["processing_speed_rpm"] / 800.0)
+                process_amount = min(max_process, machine_state["input_buffer_kg"])
+                machine_state["last_process_amount"] = process_amount
+                actual_amount = max(0.1, process_amount)
                 
                 # Mathematical Viscosity calculation
                 # Assume nominal input is 1.0 kg/cycle. If it drops, ratio of binder to powder increases, skyrocketing viscosity.
                 # Base viscosity is 350cP at 1.0kg and 800 RPM.
                 # Shear thickening fluid: Viscosity increases with higher RPM.
-                actual_amount = max(0.01, process_amount)
                 speed_factor = machine_state["processing_speed_rpm"] / 800.0
                 viscosity_target = (350.0 * speed_factor) / actual_amount
                 
@@ -113,7 +124,7 @@ try:
                     machine_state["surge_timer"] -= 1
                 else:
                     target_rpm = machine_state.get("target_speed_rpm", 800)
-                    wander = target_rpm * 0.1
+                    wander = target_rpm * 0.05
                     machine_state["processing_speed_rpm"] = int(target_rpm + random.uniform(-wander, wander))
                 
                 # Signal to machine3 that granules are ready, then CLEAR buffer (handed off)
@@ -124,6 +135,7 @@ try:
             
             elif machine_state["input_buffer_kg"] == 0:
                 machine_state["status"] = "WAITING_INPUT"
+                machine_state["last_process_amount"] = 0.0
                 
         # Thermodynamics Loop (applies every cycle regardless of status)
         # Heat generation = mechanical friction (viscosity * RPM)
@@ -131,7 +143,9 @@ try:
         ambient_temp = 25.0
         
         if machine_state["status"] == "PROCESSING":
-            heat_generation = (machine_state["viscosity_cp"] / 350.0) * (machine_state["processing_speed_rpm"] / 800.0) * 2.0
+            # CRITICAL PHYSICS: Heat generation scales quadratically with RPM and linearly with mass processed
+            amt = machine_state.get("last_process_amount", 1.0)
+            heat_generation = (machine_state["viscosity_cp"] / 350.0) * ((machine_state["processing_speed_rpm"] / 800.0) ** 2) * 2.0 * max(1.0, amt)
             machine_state["motor_temp_c"] += heat_generation
             
         # Cooling applies constantly
@@ -144,7 +158,7 @@ try:
         if True:
             client.publish("factory/status/machine2", json.dumps(machine_state))
 
-        time.sleep(3)
+        time.sleep(3.0 / TIME_SCALE)
 
 except KeyboardInterrupt:
     client.loop_stop()
