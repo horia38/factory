@@ -14,9 +14,9 @@ pip install paho-mqtt openai
 ```
 
 ### Step 2: Configure OpenAI API Key
-Edit `master_agent.py`, find this line:
-```python
-OPENAI_API_KEY = "sk-proj-..."
+Create a new file named `.env` in the root folder of the project, and add your API key like this:
+```
+OPENAI_API_KEY=sk-proj-...
 ```
 Replace with your actual OpenAI API key (get one at https://platform.openai.com/api-keys)
 

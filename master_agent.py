@@ -32,7 +32,10 @@ def append_to_log(message):
 append_to_log("Master AI Agent Started")
 
 # --- OpenAI Setup ---
-OPENAI_API_KEY = "[REDACTED_API_KEY]"
+from dotenv import load_dotenv
+import os
+load_dotenv()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ai_client = OpenAI(api_key=OPENAI_API_KEY)
 
 # --- Factory State Memory ---
